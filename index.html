@@ -854,32 +854,36 @@ function ThemeStyles() {
       /* ─── Hero bottle 3D (Three.js canvas) ─────────────────────── */
       .tn-bottle-stage {
         width: 100%;
-        max-width: 420px;
+        max-width: 460px;
         aspect-ratio: 5 / 7;
         position: relative;
         margin: 0 auto;
       }
       .tn-bottle-stage::before {
-        /* Halo difuso bajo la botella (sombra ambiental). */
-        content: ""; position: absolute; left: 18%; right: 18%;
-        bottom: 4%; height: 26px; border-radius: 50%;
-        background: radial-gradient(ellipse at center, rgba(10,15,31,0.18), transparent 70%);
-        filter: blur(8px);
+        /* Sombra ambiental difusa bajo la botella */
+        content: ""; position: absolute; left: 16%; right: 16%;
+        bottom: 3%; height: 32px; border-radius: 50%;
+        background: radial-gradient(ellipse at center, rgba(10,15,31,0.15), transparent 70%);
+        filter: blur(10px);
         pointer-events: none;
         z-index: 0;
       }
       .tn-bottle-stage::after {
-        /* Tinte azul atmosférico que envuelve la botella. */
-        content: ""; position: absolute; left: 8%; right: 8%;
-        top: 32%; height: 50%; border-radius: 50%;
-        background: radial-gradient(ellipse at center, rgba(79,181,232,0.13), transparent 65%);
-        filter: blur(20px);
+        /* Aureola dorada + azul atmosférica */
+        content: ""; position: absolute; left: 4%; right: 4%;
+        top: 20%; height: 65%; border-radius: 50%;
+        background: radial-gradient(ellipse at 50% 55%,
+          rgba(212,175,55,0.10) 0%,
+          rgba(79,181,232,0.12) 45%,
+          transparent 72%);
+        filter: blur(24px);
         pointer-events: none;
         z-index: 0;
       }
       .tn-bottle-3d {
         position: relative; z-index: 1;
         width: 100%; height: 100%;
+        cursor: crosshair;
       }
       .tn-bottle-3d canvas {
         display: block;
@@ -1418,7 +1422,7 @@ function ThemeStyles() {
         }
         .tn-hero--home .tn-hero-right { order: 2; }
         .tn-hero--home .tn-hero-left  { order: 1; }
-        .tn-bottle-stage { max-width: 260px; margin: 0 auto; }
+        .tn-bottle-stage { max-width: 300px; margin: 0 auto; }
         .tn-cat-bar {
           grid-template-columns: 1fr;
           gap: 12px;
@@ -1434,7 +1438,7 @@ function ThemeStyles() {
         .tn-modal-frame { min-height: 280px; padding: 40px 20px; }
         .tn-modal-frame svg.tn-bottle-lg { width: 150px; }
         .tn-modal-frame .tn-img-lg { max-width: 220px; max-height: 280px; }
-        .tn-bottle-stage { max-width: 220px; }
+        .tn-bottle-stage { max-width: 240px; }
       }
 
       /* Focus visible */
@@ -1617,21 +1621,19 @@ function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filter
 }
 
 /* ============================================================
-   HERO BOTTLE 3D — Three.js (r147 UMD, expone window.THREE).
+   HERO BOTTLE 3D v2 — Three.js (r147 UMD)
 
-   Construye un flacon de cristal redondo (LatheGeometry rotacional)
-   con cap negro y nozzle lateral. El líquido es una segunda lathe
-   recortada por un plano de clipping horizontal que sube y baja
-   para simular el llenado.
-
-   Loop (10s):
-     · 0.0–1.0s  vacío
-     · 1.0–5.0s  rellenado (smoothstep)
-     · 5.0–8.0s  lleno · partículas de aroma emergen del nozzle
-     · 8.0–9.5s  evaporación (opacity → 0)
-     · 9.5–10s   pausa, reinicia
-
-   Honra prefers-reduced-motion: muestra el frasco lleno estático.
+   Mejoras:
+   · Frasco esbelto con "cintura" y perfil de alta costura
+   · Tapa dorada metálica (MeshStandardMaterial) con 6 ranuras knurling
+   · 3 luces de punto orbitando (azul, dorado, blanco)
+   · Flotación suave + paralaje de ratón
+   · 70 partículas de spray siguiendo la boquilla en world-space
+   · 320 micropartículas ambientales (campo de polvo)
+   · 3 halos giratorios (azul, dorado, blanco fantasma)
+   · Glow sphere pulsante alrededor del cap
+   · Anillo de base dorado pulsante
+   · Color del líquido anima de ámbar → azul durante el llenado
    ============================================================ */
 function HeroBottle3D() {
   const mountRef = useRef(null);
@@ -1641,270 +1643,410 @@ function HeroBottle3D() {
     const mount = mountRef.current;
     if (!T || !mount) return;
 
-    // Si el navegador no soporta WebGL, salimos en silencio (el área queda vacía).
     try {
-      const test = document.createElement('canvas');
-      const ctx = test.getContext('webgl') || test.getContext('experimental-webgl');
-      if (!ctx) return;
+      const cv = document.createElement('canvas');
+      if (!cv.getContext('webgl') && !cv.getContext('experimental-webgl')) return;
     } catch (_e) { return; }
 
-    const reducedMotion =
-      window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reducedMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // ── Renderer / scene / camera ─────────────────────────────
-    const width  = mount.clientWidth  || 360;
-    const height = mount.clientHeight || 500;
-
-    const scene = new T.Scene();
-    const camera = new T.PerspectiveCamera(34, width / height, 0.1, 100);
-    camera.position.set(1.0, 3.5, 9.6);
-    camera.lookAt(0, 2.4, 0);
-
+    // ── Renderer ──────────────────────────────────────────────
+    const W = mount.clientWidth  || 420;
+    const H = mount.clientHeight || 560;
     const renderer = new T.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(width, height);
+    renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.localClippingEnabled = true;
     mount.appendChild(renderer.domElement);
 
+    const scene  = new T.Scene();
+    const camera = new T.PerspectiveCamera(28, W / H, 0.1, 120);
+    camera.position.set(0, 3.8, 12);
+    camera.lookAt(0, 2.6, 0);
+
+    // ── Mouse parallax ────────────────────────────────────────
+    const mouse = { x: 0, y: 0 };
+    const onMM = (e) => {
+      const r = mount.getBoundingClientRect();
+      mouse.x = ((e.clientX - r.left) / r.width  - 0.5) * 2;
+      mouse.y = ((e.clientY - r.top)  / r.height - 0.5) * 2;
+    };
+    mount.addEventListener('mousemove', onMM);
+
     // ── Luces ─────────────────────────────────────────────────
-    scene.add(new T.AmbientLight(0xffffff, 0.55));
-    const key = new T.DirectionalLight(0xffffff, 1.1);
-    key.position.set(4, 7, 5);
-    scene.add(key);
-    const fill = new T.DirectionalLight(0xC8E5FB, 0.42);
-    fill.position.set(-5, 3, 4);
-    scene.add(fill);
-    const rim = new T.DirectionalLight(0xffffff, 0.35);
-    rim.position.set(-3, 5, -4);
-    scene.add(rim);
+    scene.add(new T.AmbientLight(0xFFFFFF, 0.38));
+    const keyL = new T.DirectionalLight(0xFFF8F0, 1.5);
+    keyL.position.set(5, 10, 7); scene.add(keyL);
+    const rimL = new T.DirectionalLight(0xC0DEFF, 0.65);
+    rimL.position.set(-7, 3, -6); scene.add(rimL);
+    const fillL = new T.DirectionalLight(0xFFF0C8, 0.40);
+    fillL.position.set(0, -2, 6); scene.add(fillL);
 
-    // ── Perfil del frasco (LatheGeometry) ─────────────────────
-    // X = radio desde el eje Y. Y = altura desde la base.
-    // Flacon redondo niche: base ancha, hombros suaves, cuello corto.
-    const profile = [
-      new T.Vector2(0.001, 0.00),
-      new T.Vector2(0.55,  0.00),
-      new T.Vector2(0.92,  0.10),
-      new T.Vector2(1.08,  0.28),
-      new T.Vector2(1.12,  0.55),
-      new T.Vector2(1.12,  2.95),
-      new T.Vector2(1.08,  3.28),
-      new T.Vector2(0.90,  3.55),
-      new T.Vector2(0.58,  3.78),
-      new T.Vector2(0.42,  3.96),
-      new T.Vector2(0.42,  4.32),
+    // 3 luces orbitando: azul · dorado · blanco
+    const OL = [
+      { col: 0x4FB5E8, int: 2.2, r: 3.4, y: 3.2, phi: 0,               spd: 0.52 },
+      { col: 0xFFCC44, int: 1.8, r: 4.2, y: 1.8, phi: Math.PI*2/3,     spd: 0.36 },
+      { col: 0xFFFFFF, int: 1.3, r: 2.8, y: 5.0, phi: Math.PI*4/3,     spd: 0.68 },
     ];
-    const LATHE_SEG = 96;
-    const NECK_TOP = 4.32;
-    const FULL_LEVEL = 3.80;  // a la altura del hombro alto
+    const orbitLights = OL.map(c => {
+      const pl = new T.PointLight(c.col, c.int, 14, 1.5);
+      scene.add(pl); pl.__c = c; return pl;
+    });
 
-    const glassGeo = new T.LatheGeometry(profile, LATHE_SEG);
+    // ── Grupo flotante (todo el frasco) ───────────────────────
+    const btl = new T.Group();
+    scene.add(btl);
+
+    // ── Perfil esbelto con cintura sutil ──────────────────────
+    const prof = [
+      new T.Vector2(0.001, 0.00),
+      new T.Vector2(0.62,  0.00),
+      new T.Vector2(0.95,  0.15),
+      new T.Vector2(1.18,  0.40),
+      new T.Vector2(1.22,  0.78),
+      new T.Vector2(1.19,  1.55),
+      new T.Vector2(1.16,  2.00),
+      new T.Vector2(1.19,  2.52),
+      new T.Vector2(1.15,  3.05),
+      new T.Vector2(0.96,  3.45),
+      new T.Vector2(0.64,  3.72),
+      new T.Vector2(0.46,  3.94),
+      new T.Vector2(0.44,  4.40),
+    ];
+    const SEG  = 120;
+    const NTOP = 4.40;
+    const FLVL = 3.68;
+
+    const toDispose = [];
+
+    // Vidrio exterior — alta reflexión especular
+    const glassGeo = new T.LatheGeometry(prof, SEG);
     const glassMat = new T.MeshPhongMaterial({
-      color: 0xFFFFFF,
-      transparent: true,
-      opacity: 0.18,
-      shininess: 120,
-      specular: 0xFFFFFF,
-      side: T.DoubleSide,
-      depthWrite: false,
+      color: 0xFFFFFF, transparent: true, opacity: 0.13,
+      shininess: 220, specular: 0xFFFFFF,
+      side: T.DoubleSide, depthWrite: false,
     });
-    const glass = new T.Mesh(glassGeo, glassMat);
-    scene.add(glass);
+    btl.add(new T.Mesh(glassGeo, glassMat));
+    toDispose.push(glassGeo, glassMat);
 
-    // Línea de contorno tenue para definir la silueta sobre fondo blanco.
-    const edgesGeo = new T.EdgesGeometry(glassGeo, 30);
-    const edgesMat = new T.LineBasicMaterial({
-      color: 0xB8C2CC, transparent: true, opacity: 0.55,
+    // Contorno de silueta
+    const edgesGeo = new T.EdgesGeometry(glassGeo, 22);
+    const edgesMat = new T.LineBasicMaterial({ color: 0x88BBCC, transparent: true, opacity: 0.40 });
+    btl.add(new T.LineSegments(edgesGeo, edgesMat));
+    toDispose.push(edgesGeo, edgesMat);
+
+    // Capa interior tintada (profundidad de vidrio)
+    const innerProf = prof.map(v => new T.Vector2(Math.max(0.001, v.x * 0.90), v.y));
+    const innerGeo  = new T.LatheGeometry(innerProf, SEG);
+    const innerMat  = new T.MeshPhongMaterial({
+      color: 0xD0EAFF, transparent: true, opacity: 0.055,
+      shininess: 50, side: T.BackSide, depthWrite: false,
     });
-    const edges = new T.LineSegments(edgesGeo, edgesMat);
-    scene.add(edges);
+    btl.add(new T.Mesh(innerGeo, innerMat));
+    toDispose.push(innerGeo, innerMat);
 
-    // ── Líquido (lathe ligeramente interior, recortado por plano) ─
-    const liquidProfile = profile.map(v =>
-      new T.Vector2(Math.max(0.001, v.x - 0.08), v.y)
-    );
-    const liquidGeo = new T.LatheGeometry(liquidProfile, LATHE_SEG);
-
-    // Plano de clipping horizontal: keep where -y + constant > 0  =>  y < constant
+    // ── Líquido + plano de corte ──────────────────────────────
+    const liqProf = prof.map(v => new T.Vector2(Math.max(0.001, v.x - 0.10), v.y));
+    const liqGeo  = new T.LatheGeometry(liqProf, SEG);
     const fillPlane = new T.Plane(new T.Vector3(0, -1, 0), 0);
-
-    const liquidMat = new T.MeshPhongMaterial({
-      color: 0x4FB5E8,
-      shininess: 90,
-      specular: 0xA7DDFC,
-      transparent: true,
-      opacity: 0.90,
-      clippingPlanes: [fillPlane],
-      clipShadows: false,
-      side: T.DoubleSide,
+    const liqMat  = new T.MeshPhongMaterial({
+      color: 0xE8820A, shininess: 100, specular: 0xFFD080,
+      transparent: true, opacity: 0.88,
+      clippingPlanes: [fillPlane], clipShadows: false, side: T.DoubleSide,
     });
-    const liquid = new T.Mesh(liquidGeo, liquidMat);
-    scene.add(liquid);
+    const liqMesh = new T.Mesh(liqGeo, liqMat);
+    btl.add(liqMesh);
+    toDispose.push(liqGeo, liqMat);
 
-    // Disco superficial: una elipse fina en la cota del líquido para que
-    // se vea el "menisco". Se mueve solidaria con fillPlane.
-    const surfaceGeo = new T.CircleGeometry(1.0, 64);
-    surfaceGeo.rotateX(-Math.PI / 2);
-    const surfaceMat = new T.MeshBasicMaterial({
-      color: 0xE5F4FD,
-      transparent: true,
-      opacity: 0.55,
-      side: T.DoubleSide,
+    // Menisco
+    const surfGeo = new T.CircleGeometry(1.0, 64);
+    surfGeo.rotateX(-Math.PI / 2);
+    const surfMat = new T.MeshBasicMaterial({
+      color: 0xFFDDA0, transparent: true, opacity: 0.55, side: T.DoubleSide,
     });
-    const surface = new T.Mesh(surfaceGeo, surfaceMat);
-    scene.add(surface);
+    const surfMesh = new T.Mesh(surfGeo, surfMat);
+    btl.add(surfMesh);
+    toDispose.push(surfGeo, surfMat);
 
-    // Helper: radio interior del frasco a una altura Y dada (interpola el perfil).
     function radiusAt(y) {
-      for (let i = 0; i < liquidProfile.length - 1; i++) {
-        const a = liquidProfile[i];
-        const b = liquidProfile[i + 1];
+      for (let i = 0; i < liqProf.length - 1; i++) {
+        const a = liqProf[i], b = liqProf[i + 1];
         if (y >= a.y && y <= b.y) {
-          const t = (b.y === a.y) ? 0 : (y - a.y) / (b.y - a.y);
-          return a.x + (b.x - a.x) * t;
+          const u = b.y === a.y ? 0 : (y - a.y) / (b.y - a.y);
+          return a.x + (b.x - a.x) * u;
         }
       }
-      return liquidProfile[liquidProfile.length - 1].x;
+      return liqProf[liqProf.length - 1].x;
     }
 
-    // ── Cap / atomizador ──────────────────────────────────────
-    const capMat = new T.MeshPhongMaterial({
-      color: 0x0A0F1F,
-      shininess: 60,
-      specular: 0x3A4050,
+    // ── Etiqueta cilíndrica ───────────────────────────────────
+    const lblGeo = new T.CylinderGeometry(1.22, 1.22, 1.50, SEG, 1, true,
+      -Math.PI * 0.50, Math.PI);
+    const lblMat = new T.MeshStandardMaterial({
+      color: 0xF9F5EE, roughness: 0.92, metalness: 0,
+      transparent: true, opacity: 0.65, side: T.DoubleSide,
     });
-    const capGeo = new T.CylinderGeometry(0.56, 0.56, 0.85, 48);
-    const cap = new T.Mesh(capGeo, capMat);
-    cap.position.y = NECK_TOP + 0.42;  // 4.74
-    scene.add(cap);
+    const lblMesh = new T.Mesh(lblGeo, lblMat);
+    lblMesh.position.y = 1.65;
+    btl.add(lblMesh);
+    toDispose.push(lblGeo, lblMat);
 
-    // Botón superior del atomizador
-    const btnGeo = new T.CylinderGeometry(0.32, 0.34, 0.22, 32);
-    const btn = new T.Mesh(btnGeo, capMat);
-    btn.position.y = NECK_TOP + 0.95;  // 5.27
-    scene.add(btn);
+    // ── Tapa dorada (MeshStandardMaterial PBR) ────────────────
+    const goldMat = new T.MeshStandardMaterial({
+      color: 0xC8A84B, metalness: 1.0, roughness: 0.12,
+    });
+    const darkGoldMat = new T.MeshStandardMaterial({
+      color: 0x9A7830, metalness: 1.0, roughness: 0.28,
+    });
+    toDispose.push(goldMat, darkGoldMat);
 
-    // Nozzle lateral (de donde sale el aroma)
-    const nozzleMat = new T.MeshPhongMaterial({ color: 0x6B7480, shininess: 30 });
-    const nozzleGeo = new T.CylinderGeometry(0.07, 0.07, 0.18, 16);
-    const nozzle = new T.Mesh(nozzleGeo, nozzleMat);
-    nozzle.rotation.z = Math.PI / 2;
-    nozzle.position.set(0.55, NECK_TOP + 0.55, 0);
-    scene.add(nozzle);
+    const capGeo = new T.CylinderGeometry(0.50, 0.52, 0.95, 64);
+    const capMesh = new T.Mesh(capGeo, goldMat);
+    capMesh.position.y = NTOP + 0.475;
+    btl.add(capMesh);
+    toDispose.push(capGeo);
 
-    // ── Partículas de aroma ───────────────────────────────────
-    const NUM_PARTICLES = 22;
-    const partGeo = new T.SphereGeometry(0.055, 10, 10);
-    const particles = [];
-    for (let i = 0; i < NUM_PARTICLES; i++) {
-      const m = new T.MeshBasicMaterial({
-        color: 0x4FB5E8,
-        transparent: true,
-        opacity: 0,
-      });
-      const mesh = new T.Mesh(partGeo, m);
-      mesh.visible = false;
-      mesh.userData = {
-        // Cada partícula tiene su instante de emisión escalonado dentro
-        // de la fase "lleno" para que salga una columna continua.
-        emitT: 0.50 + (i / NUM_PARTICLES) * 0.30,
-        xOff: (Math.random() - 0.5) * 0.55,
-        zOff: (Math.random() - 0.5) * 0.55,
-        wobble: Math.random() * Math.PI * 2,
-      };
-      scene.add(mesh);
-      particles.push(mesh);
+    // Ranuras de knurling (6 anillos)
+    for (let i = 0; i < 6; i++) {
+      const rg = new T.TorusGeometry(0.52, 0.014, 8, 64);
+      const rm = new T.Mesh(rg, darkGoldMat);
+      rm.position.y = NTOP + 0.10 + i * 0.14;
+      btl.add(rm);
+      toDispose.push(rg);
     }
 
-    // ── Grupo rotatorio (todo lo asimétrico) ──────────────────
-    // El frasco propiamente es simétrico de revolución, así que rotar la
-    // lathe no produce cambio visible. Rotamos cap + nozzle + partículas
-    // como pivote y la lathe se "anima" por las luces y por la cota del
-    // líquido. Para reforzar el efecto, hacemos orbitar ligeramente la
-    // posición del nozzle (debajo).
+    // Domo superior de la tapa
+    const domeGeo = new T.SphereGeometry(0.50, 48, 16, 0, Math.PI*2, 0, Math.PI*0.5);
+    const domeMesh = new T.Mesh(domeGeo, goldMat);
+    domeMesh.position.y = NTOP + 0.95;
+    btl.add(domeMesh);
+    toDispose.push(domeGeo);
 
-    // ── Loop ──────────────────────────────────────────────────
+    // Botón atomizador
+    const btnGeo = new T.CylinderGeometry(0.26, 0.28, 0.16, 32);
+    const btnMesh = new T.Mesh(btnGeo, goldMat);
+    btnMesh.position.y = NTOP + 1.12;
+    btl.add(btnMesh);
+    toDispose.push(btnGeo);
+
+    // Nozzle lateral
+    const nozzGeo = new T.CylinderGeometry(0.052, 0.052, 0.22, 16);
+    const nozzMat = new T.MeshStandardMaterial({ color: 0x907028, metalness: 0.9, roughness: 0.28 });
+    const nozzMesh = new T.Mesh(nozzGeo, nozzMat);
+    nozzMesh.rotation.z = Math.PI / 2;
+    nozzMesh.position.set(0.50, NTOP + 0.60, 0);
+    btl.add(nozzMesh);
+    toDispose.push(nozzGeo, nozzMat);
+
+    // ── Anillo de base dorado pulsante ────────────────────────
+    const bRingGeo = new T.TorusGeometry(0.68, 0.055, 16, 64);
+    const bRingMat = new T.MeshStandardMaterial({
+      color: 0xC8A84B, metalness: 1.0, roughness: 0.10,
+      emissive: 0xC8A84B, emissiveIntensity: 0,
+    });
+    const bRing = new T.Mesh(bRingGeo, bRingMat);
+    bRing.position.y = 0.055;
+    btl.add(bRing);
+    toDispose.push(bRingGeo, bRingMat);
+
+    // ── Esfera de glow alrededor del cap ──────────────────────
+    const glowGeo = new T.SphereGeometry(0.90, 32, 32);
+    const glowMat = new T.MeshBasicMaterial({
+      color: 0x4FB5E8, transparent: true, opacity: 0,
+      depthWrite: false, side: T.BackSide,
+    });
+    const glowMesh = new T.Mesh(glowGeo, glowMat);
+    glowMesh.scale.set(1.8, 1.1, 1.8);
+    glowMesh.position.y = NTOP + 0.55;
+    btl.add(glowMesh);
+    toDispose.push(glowGeo, glowMat);
+
+    // ── 3 Halos giratorios ────────────────────────────────────
+    const makeHalo = (radius, tube, col, opa, rx, ry, rz) => {
+      const g = new T.TorusGeometry(radius, tube, 8, 180);
+      const m = new T.MeshBasicMaterial({ color: col, transparent: true, opacity: opa, depthWrite: false });
+      const h = new T.Mesh(g, m);
+      h.rotation.set(rx, ry, rz);
+      h.position.y = 2.6;
+      scene.add(h);
+      toDispose.push(g, m);
+      return { mesh: h, mat: m };
+    };
+    const halo1 = makeHalo(2.6, 0.022, 0x4FB5E8, 0.20, Math.PI/2, 0, 0);
+    const halo2 = makeHalo(2.0, 0.018, 0xD4AF37, 0.16, Math.PI/3, 0, Math.PI/5);
+    const halo3 = makeHalo(3.2, 0.014, 0xFFFFFF, 0.08, -Math.PI/5, Math.PI/7, Math.PI/3);
+
+    // ── Campo de 320 micropartículas ──────────────────────────
+    const AMB = 320;
+    const ambPos = new Float32Array(AMB * 3);
+    for (let i = 0; i < AMB; i++) {
+      ambPos[i*3]   = (Math.random() - 0.5) * 10;
+      ambPos[i*3+1] = Math.random() * 9;
+      ambPos[i*3+2] = (Math.random() - 0.5) * 10;
+    }
+    const ambGeo = new T.BufferGeometry();
+    ambGeo.setAttribute('position', new T.BufferAttribute(ambPos, 3));
+    const ambMat = new T.PointsMaterial({
+      color: 0x7FCAEE, size: 0.028, transparent: true,
+      opacity: 0.28, depthWrite: false, sizeAttenuation: true,
+    });
+    scene.add(new T.Points(ambGeo, ambMat));
+    toDispose.push(ambGeo, ambMat);
+
+    // ── Sombra de suelo ───────────────────────────────────────
+    const shdGeo = new T.CircleGeometry(1.9, 64);
+    shdGeo.rotateX(-Math.PI / 2);
+    const shdMat = new T.MeshBasicMaterial({
+      color: 0x0A0F1F, transparent: true, opacity: 0.08, depthWrite: false,
+    });
+    const shdMesh = new T.Mesh(shdGeo, shdMat);
+    shdMesh.position.y = 0.003;
+    scene.add(shdMesh);
+    toDispose.push(shdGeo, shdMat);
+
+    // ── 70 partículas de spray (cloud) ────────────────────────
+    const sprayGeo = new T.SphereGeometry(1, 7, 7);
+    const sprayMats = [0x4FB5E8, 0x8FD0F5, 0xFFFFFF].map(c =>
+      new T.MeshBasicMaterial({ color: c, transparent: true, opacity: 0, depthWrite: false })
+    );
+    const spray = Array.from({ length: 70 }, (_, i) => {
+      const m = new T.Mesh(sprayGeo, sprayMats[i % 3]);
+      m.visible = false;
+      m.userData = {
+        emitT: 0.48 + (i / 70) * 0.36,
+        xOff: (Math.random() - 0.5) * 0.90,
+        zOff: (Math.random() - 0.5) * 0.90,
+        wob:  Math.random() * Math.PI * 2,
+        sz:   0.030 + Math.random() * 0.055,
+      };
+      scene.add(m); return m;
+    });
+    toDispose.push(sprayGeo, ...sprayMats);
+
+    // ── Loop principal ────────────────────────────────────────
     const clock = new T.Clock();
-    const LOOP = 10.0;
-    let raf = 0;
-    let alive = true;
+    const LOOP = 11.0;
+    let raf = 0, alive = true;
+    let mLX = 0, mLY = 0;
+    const nozzWP = new T.Vector3();
+
+    // Fases del ciclo de llenado
+    const FS = 0.08, FE = 0.48, HE = 0.78, EE = 0.94;
 
     function step() {
       if (!alive) return;
       raf = requestAnimationFrame(step);
-      const elapsed = clock.getElapsedTime();
-      const t = reducedMotion ? 0.65 : ((elapsed % LOOP) / LOOP);
+      const e = clock.getElapsedTime();
+      const t = reducedMotion ? 0.60 : (e % LOOP) / LOOP;
 
-      const FILL_START = 0.10;
-      const FILL_END   = 0.50;
-      const HOLD_END   = 0.80;
-      const EVAP_END   = 0.95;
+      // — Flotación + paralaje —
+      if (!reducedMotion) {
+        btl.position.y = Math.sin(e * 0.80) * 0.14;
+        btl.rotation.y = e * 0.20;
+        mLX += (mouse.x *  0.13 - mLX) * 0.055;
+        mLY += (mouse.y * -0.09 - mLY) * 0.055;
+        btl.rotation.z = Math.sin(e * 0.55) * 0.013 + mLX;
+        btl.rotation.x = Math.cos(e * 0.47) * 0.011 + mLY;
+      }
 
-      let level, opacity;
-      if (t < FILL_START) {
-        level = 0;             opacity = 0.90;
-      } else if (t < FILL_END) {
-        const u = (t - FILL_START) / (FILL_END - FILL_START);
-        const eased = u * u * (3 - 2 * u);
-        level   = eased * FULL_LEVEL;
-        opacity = 0.90;
-      } else if (t < HOLD_END) {
-        level = FULL_LEVEL;    opacity = 0.90;
-      } else if (t < EVAP_END) {
-        const u = (t - HOLD_END) / (EVAP_END - HOLD_END);
-        level   = FULL_LEVEL;
-        opacity = 0.90 * (1 - u);
+      // — Luces orbitando —
+      orbitLights.forEach(pl => {
+        const c = pl.__c;
+        const a = e * c.spd + c.phi;
+        pl.position.set(
+          Math.cos(a) * c.r,
+          c.y + Math.sin(e * 0.42 + c.phi) * 0.6,
+          Math.sin(a) * c.r,
+        );
+      });
+
+      // — Halos —
+      halo1.mesh.rotation.y =  e * 0.62;
+      halo2.mesh.rotation.y = -e * 0.44;
+      halo3.mesh.rotation.y =  e * 0.28;
+      const hp = 0.13 + Math.sin(e * 1.3) * 0.07;
+      halo1.mat.opacity = hp;
+      halo2.mat.opacity = hp * 0.80;
+      halo3.mat.opacity = hp * 0.42;
+
+      // — Campo ambiental —
+      ambMat.opacity = 0.20 + Math.sin(e * 0.65) * 0.09;
+
+      // — Ciclo de llenado —
+      let level = 0, opa = 0.88;
+      if (t < FS) {
+        level = 0; opa = 0.88;
+      } else if (t < FE) {
+        const u = (t - FS) / (FE - FS);
+        const ease = u < 0.5 ? 4*u*u*u : 1 - Math.pow(-2*u+2, 3)/2;
+        level = ease * FLVL;
+        opa   = 0.88;
+        // Ámbar → azul zafiro durante el llenado
+        liqMat.color.setHSL(0.07 + ease * 0.50, 0.82 + ease * 0.05, 0.55 + ease * 0.04);
+        surfMat.color.setHSL(0.10 + ease * 0.48, 0.80, 0.72);
+      } else if (t < HE) {
+        level = FLVL; opa = 0.88;
+        const sh = Math.sin(e * 2.0) * 0.015;
+        liqMat.color.setHSL(0.57 + sh, 0.85, 0.58);
+        surfMat.color.setHex(0xC8E8FC);
+      } else if (t < EE) {
+        const u = (t - HE) / (EE - HE);
+        level = FLVL; opa = 0.88 * (1 - u * u);
       } else {
-        level = 0;             opacity = 0;
+        level = 0; opa = 0;
       }
 
       fillPlane.constant = level;
-      liquidMat.opacity  = opacity;
-      liquid.visible     = opacity > 0.01;
+      liqMat.opacity  = opa;
+      liqMesh.visible = opa > 0.01;
 
-      // Superficie del líquido (disco que sigue al menisco)
-      if (level > 0.01 && opacity > 0.01) {
+      // Menisco
+      if (level > 0.01 && opa > 0.01) {
         const r = radiusAt(level);
-        surface.position.y = level - 0.001;
-        surface.scale.set(r, 1, r);
-        surfaceMat.opacity = 0.55 * (opacity / 0.90);
-        surface.visible = true;
+        surfMesh.position.y = level - 0.001;
+        surfMesh.scale.set(r, 1, r);
+        surfMat.opacity = 0.55 * (opa / 0.88);
+        surfMesh.visible = true;
       } else {
-        surface.visible = false;
+        surfMesh.visible = false;
       }
 
-      // Partículas: emisión escalonada durante la fase "lleno"
-      const emitPhase = t >= FILL_END && t < EVAP_END;
-      for (const p of particles) {
+      // Glow pulsante
+      glowMat.opacity = (opa > 0.01 && t >= FE)
+        ? (0.04 + (Math.sin(e * 2.6) * 0.5 + 0.5) * 0.09) * (opa / 0.88)
+        : 0;
+
+      // Anillo de base
+      bRingMat.emissiveIntensity = (t >= FE && t < EE)
+        ? 0.28 + Math.sin(e * 2.8) * 0.14 : 0;
+
+      // Sombra dinámica
+      shdMat.opacity = 0.05 + (level / FLVL) * 0.07;
+
+      // — Partículas de spray —
+      const emit = t >= FE && t < EE;
+      nozzMesh.getWorldPosition(nozzWP);
+      for (const p of spray) {
         const ud = p.userData;
-        const age = ((t - ud.emitT + 1) % 1);   // [0, 1)
-        const LIFE = 0.22;
-        if (emitPhase && age < LIFE) {
-          const u = age / LIFE;
+        const age = ((t - ud.emitT + 1) % 1);
+        const LIFE = 0.30;
+        if (emit && age < LIFE) {
+          const u    = age / LIFE;
           const ease = 1 - (1 - u) * (1 - u);
-          const wob = Math.sin(elapsed * 2 + ud.wobble) * 0.06;
+          const wob  = Math.sin(e * 2.6 + ud.wob) * 0.09;
+          const spread = 0.30 + ease * 2.6;
           p.position.set(
-            (ud.xOff + wob) * (0.4 + ease * 1.4),
-            NECK_TOP + 0.95 + ease * 2.4,
-            (ud.zOff - wob) * (0.4 + ease * 1.4),
+            nozzWP.x + (ud.xOff + wob) * spread,
+            nozzWP.y + ease * 3.2,
+            nozzWP.z + (ud.zOff - wob) * spread,
           );
-          p.material.opacity = (1 - u) * 0.50;
-          p.scale.setScalar(0.35 + ease * 1.6);
+          p.scale.setScalar(ud.sz * 2 * (0.22 + ease * 2.2));
+          p.material.opacity = (1 - u * u) * 0.60;
           p.visible = true;
         } else {
           p.visible = false;
         }
-      }
-
-      if (!reducedMotion) {
-        // Rotación lenta del conjunto. La lathe es de revolución, pero el
-        // nozzle y las partículas sí tienen orientación.
-        const ang = elapsed * 0.22;
-        cap.rotation.y    = ang;
-        btn.rotation.y    = ang;
-        nozzle.position.x = Math.cos(ang) * 0.55;
-        nozzle.position.z = Math.sin(ang) * 0.55;
-        nozzle.rotation.y = -ang;
       }
 
       renderer.render(scene, camera);
@@ -1919,24 +2061,17 @@ function HeroBottle3D() {
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
-    const ro = (window.ResizeObserver) ? new ResizeObserver(onResize) : null;
+    const ro = window.ResizeObserver ? new ResizeObserver(onResize) : null;
     if (ro) ro.observe(mount); else window.addEventListener('resize', onResize);
 
     // ── Cleanup ───────────────────────────────────────────────
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      mount.removeEventListener('mousemove', onMM);
       if (ro) ro.disconnect(); else window.removeEventListener('resize', onResize);
       try { mount.removeChild(renderer.domElement); } catch (_e) {}
-      glassGeo.dispose();  glassMat.dispose();
-      edgesGeo.dispose();  edgesMat.dispose();
-      liquidGeo.dispose(); liquidMat.dispose();
-      surfaceGeo.dispose(); surfaceMat.dispose();
-      capGeo.dispose();    capMat.dispose();
-      btnGeo.dispose();
-      nozzleGeo.dispose(); nozzleMat.dispose();
-      partGeo.dispose();
-      particles.forEach(p => p.material.dispose());
+      toDispose.forEach(o => { try { o.dispose(); } catch (_e) {} });
       renderer.dispose();
     };
   }, []);
