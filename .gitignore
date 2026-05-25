@@ -1,0 +1,33 @@
+# Dataset crudo de Kaggle — no se redistribuye, se descarga aparte.
+# Ver README.md sección "Setup inicial".
+data/parfumo_data.csv
+
+# Bundle generado para mover el scraper a otra máquina (ad-hoc).
+scraper-bundle.zip
+
+# Capturas de pantalla del workflow de desarrollo (preview, debugging).
+_preview_*.png
+
+# Backups y archivos temporales del editor.
+*.bak
+*.swp
+*.tmp
+
+# Caches de Python.
+__pycache__/
+*.pyc
+*.pyo
+
+# Sistema operativo.
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores / IDE.
+.vscode/
+.idea/
+
+# API keys locales (la app guarda la key de Gemini en localStorage, no en disco,
+# pero por si acaso aparece un .env en el futuro).
+.env
+.env.local

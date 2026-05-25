@@ -1,0 +1,2786 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Top Note — Encuentra tu aroma</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+  <!-- Three.js UMD (r147 — última versión con build no-ESM). Expone window.THREE. -->
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <style>
+    html, body { background: #FFFFFF; margin: 0; padding: 0; min-height: 100vh; font-family: "Geist", system-ui, sans-serif; }
+    #root { min-height: 100vh; }
+    .__boot {
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      color: #6B7480; font-weight: 500;
+      font-size: 14px; letter-spacing: -0.01em;
+      gap: 10px;
+    }
+    .__boot::before {
+      content: ""; width: 10px; height: 10px; border-radius: 50%;
+      background: #4FB5E8; box-shadow: 0 0 0 4px rgba(79,181,232,0.18);
+      animation: __bootping 1.8s infinite;
+    }
+    @keyframes __bootping {
+      0% { box-shadow: 0 0 0 0 rgba(79,181,232,0.5); }
+      70% { box-shadow: 0 0 0 9px rgba(79,181,232,0); }
+      100% { box-shadow: 0 0 0 0 rgba(79,181,232,0); }
+    }
+  </style>
+</head>
+<body>
+<div id="root">
+  <div class="__boot">topnote · cargando…</div>
+</div>
+
+<script>
+  /* ============================================================
+     POLYFILLS — para correr el artifact en navegador estándar
+     ============================================================ */
+  // window.storage es API específica de Claude artifacts. Usamos localStorage como backend.
+  window.storage = {
+    async getItem(k)    { return localStorage.getItem(k); },
+    async setItem(k, v) { localStorage.setItem(k, v); },
+    async removeItem(k) { localStorage.removeItem(k); }
+  };
+
+  // Llamamos a Google Gemini directamente desde el navegador. CORS habilitado
+  // por Google. La key se guarda en localStorage y solo viaja a Google.
+  window.claude = {
+    async complete(prompt, options) {
+      // Limpieza de migración: si quedaba clave antigua de Anthropic, fuera.
+      if (localStorage.getItem('topnote.anthropic_key')) {
+        localStorage.removeItem('topnote.anthropic_key');
+      }
+      options = options || {};
+
+      let apiKey = localStorage.getItem('topnote.gemini_key');
+      if (!apiKey) {
+        apiKey = window.prompt(
+          'Top Note — Introduce tu API key de Google Gemini (AIza...)\n\n' +
+          'Consíguela gratis en https://aistudio.google.com/apikey\n' +
+          'Se guarda solo en este navegador y se envía únicamente a generativelanguage.googleapis.com.'
+        );
+        if (!apiKey || !apiKey.trim()) {
+          throw new Error('Se requiere una API key de Gemini para consultar al perfumista.');
+        }
+        localStorage.setItem('topnote.gemini_key', apiKey.trim());
+      }
+
+      const model = 'gemini-2.5-flash';
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+      const generationConfig = {
+        maxOutputTokens: options.maxOutputTokens || 16384,
+        responseMimeType: 'application/json',
+        // Desactivamos el "thinking" de Gemini 2.5. Los tokens de razonamiento
+        // interno cuentan contra maxOutputTokens y truncaban la salida JSON.
+        // Para ranking sobre 80 candidatos no necesitamos chain-of-thought.
+        thinkingConfig: { thinkingBudget: 0 }
+      };
+      if (options.responseSchema) generationConfig.responseSchema = options.responseSchema;
+      const body = JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig
+      });
+
+      // Reintento con backoff exponencial para 503 (modelo sobrecargado) y
+      // errores transitorios de red. No reintenta en 4xx (problema del cliente).
+      const backoffsMs = [1200, 3500, 8000];
+      let res = null;
+      let lastErr = null;
+      for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
+        try {
+          res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-goog-api-key': apiKey.trim()
+            },
+            body
+          });
+        } catch (e) {
+          lastErr = e;
+          if (attempt < backoffsMs.length) {
+            await new Promise((r) => setTimeout(r, backoffsMs[attempt]));
+            continue;
+          }
+          throw new Error('No se ha podido contactar con la API de Gemini. Comprueba tu conexión.');
+        }
+        if (res.ok) break;
+        // Estados transitorios -> reintentar
+        if ((res.status === 503 || res.status === 502 || res.status === 504)
+            && attempt < backoffsMs.length) {
+          await new Promise((r) => setTimeout(r, backoffsMs[attempt]));
+          continue;
+        }
+        break;
+      }
+      if (!res) throw lastErr || new Error('Sin respuesta de Gemini.');
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        if (res.status === 400 && /API_KEY/i.test(txt)) {
+          localStorage.removeItem('topnote.gemini_key');
+          throw new Error('API key inválida. Recarga la página para reintroducirla.');
+        }
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem('topnote.gemini_key');
+          throw new Error('API key sin permisos. Recarga la página para reintroducirla.');
+        }
+        if (res.status === 429) {
+          throw new Error('Cuota gratuita agotada (o demasiadas req/min). Inténtalo en unos minutos.');
+        }
+        if (res.status === 503) {
+          throw new Error('Gemini está sobrecargado ahora mismo (lo intenté 4 veces). Espera 1-2 min y reintenta.');
+        }
+        throw new Error('La API ha respondido con error ' + res.status + '. ' + txt.slice(0, 160));
+      }
+      const data = await res.json();
+      const cand = data && data.candidates && data.candidates[0];
+      const text = cand && cand.content && cand.content.parts &&
+                   cand.content.parts[0] && cand.content.parts[0].text;
+      if (!text) {
+        const fr = cand && cand.finishReason;
+        throw new Error('Respuesta inesperada de Gemini' + (fr ? ` (finishReason: ${fr})` : '') + '.');
+      }
+      if (cand.finishReason && cand.finishReason !== 'STOP') {
+        // Truncado a mitad: avisamos pero devolvemos lo que haya por si es parseable.
+        console.warn('[Gemini] respuesta no terminó limpia. finishReason=', cand.finishReason);
+      }
+      return text;
+    }
+  };
+
+  // Reset desde consola: resetTopNote()
+  window.resetTopNote = function () {
+    localStorage.removeItem('topnote.gemini_key');
+    localStorage.removeItem('topnote.anthropic_key');   // legacy
+    localStorage.removeItem('topnote.favorites.v1');
+    localStorage.removeItem('topnote.history.v1');
+    location.reload();
+  };
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo } = React;
+
+/* === ICONOS principales (los que el código de App utiliza) === */
+const __ic = (paths, p) => (
+  <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24"
+       fill={p.fill||'none'} stroke="currentColor"
+       strokeWidth={p.strokeWidth||1.6} strokeLinecap="round" strokeLinejoin="round"
+       className={p.className||''}>
+    {paths}
+  </svg>
+);
+const Heart = (p) => __ic(<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>, p);
+const X = (p) => __ic(<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>, p);
+const Clock = (p) => __ic(<><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>, p);
+// ArrowRight / ArrowLeft / ArrowUpRight ya no se usan en la nueva UI (las llamadas usan los SvgArrow* del App)
+
+/* === APP === */
+/* ============================================================
+   CATÁLOGO OLFATIVO — cargado desde data/catalog.json (dataset Parfumo).
+   Generado por scripts/ingest_parfumo.py · ver README.md
+   ============================================================ */
+let CATALOG = [];   /* poblado en runtime desde data/catalog.json */
+const CATALOG_PATH = 'data/catalog.json';
+
+/* ============================================================
+   CONSTANTES UI
+   ============================================================ */
+const PLACEHOLDER_EXAMPLES = [
+  'Algo dulce para invierno, parecido a Baccarat Rouge 540 pero más asequible y para uso diario...',
+  'Una fragancia masculina elegante para la oficina; fresca pero con presencia...',
+  'Perfume floral para una primera cita en primavera, sin ser empalagoso...',
+  'Un oriental especiado para noches frías; algo memorable y poco común...',
+];
+
+const EXAMPLE_QUERIES = [
+  'Dame algo como Sauvage pero más maduro y menos común',
+  'Algo amaderado de oficina, fresco pero con presencia',
+  'Un gourmand de vainilla y tabaco para invierno',
+  'Un floral ligero de primavera con jazmín o flor de naranjo',
+  'Mi pareja usa Coco Mademoiselle; quiero algo distinto pero compatible',
+];
+
+const SEASON_OPTIONS = ['primavera', 'verano', 'otoño', 'invierno'];
+const GENDER_OPTIONS = ['masculino', 'femenino', 'unisex'];
+const FAMILIA_OPTIONS = ['amaderada', 'oriental', 'floral', 'cítrica', 'gourmand', 'chipre', 'fougère'];
+
+const STORAGE_KEYS = {
+  FAVORITES: 'topnote.favorites.v1',
+  HISTORY: 'topnote.history.v1',
+};
+
+const FAMILIA_LABELS = {
+  amaderada: 'Amaderada',
+  oriental: 'Oriental',
+  floral: 'Floral',
+  'cítrica': 'Cítrica',
+  gourmand: 'Gourmand',
+  chipre: 'Chipre',
+  'fougère': 'Fougère',
+};
+
+/* Tamaño máximo de candidatos que viajan en el prompt al LLM.
+   Por encima de ~120 se va de tokens con un catálogo de 20k. */
+const LLM_CANDIDATE_CAP = 80;
+
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
+const fmtInt = (n) => (n == null ? '—' : Number(n).toLocaleString('es-ES'));
+
+/* Construye una descripción corta a partir de las notas, ya que el dataset
+   Parfumo no trae copy editorial. */
+function autoDesc(p) {
+  const head = (p.notas?.salida || [])[0];
+  const heart = (p.notas?.corazon || [])[0];
+  const base = (p.notas?.fondo || [])[0];
+  const fam = FAMILIA_LABELS[p.familia] || p.familia || '';
+  const parts = [head, heart, base].filter(Boolean);
+  if (!parts.length) return `${fam}.`;
+  return `${fam} con ${parts.join(', ')}.`;
+}
+
+/* ============================================================
+   ALMACENAMIENTO
+   ============================================================ */
+async function loadStorage(key, fallback) {
+  try {
+    const v = await window.storage.getItem(key);
+    return v ? JSON.parse(v) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+async function saveStorage(key, value) {
+  try {
+    await window.storage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* silencio */
+  }
+}
+
+/* ============================================================
+   PREFILTRO CLIENT-SIDE
+   ============================================================
+   Con ~20k perfumes no podemos enviar todo al LLM. Pre-seleccionamos
+   candidatos por:
+     1. Filtros duros del UI (familia, género, temporada).
+     2. Score textual contra notas/casa/familia/acordes desde el query.
+     3. Prior de calidad (rating × log(1+votos)).
+   Devolvemos top N (LLM_CANDIDATE_CAP) al perfumista para re-ranking. */
+const STOPWORDS_ES = new Set([
+  'de','la','el','los','las','un','una','unos','unas','y','o','con','sin','para',
+  'que','como','algo','en','por','del','al','su','sus','muy','más','menos','pero',
+  'me','mi','tu','lo','le','les','este','esta','estos','estas','ese','esa','esos',
+  'esas','quiero','busco','dame','necesito','similar','similares','parecido','perfume',
+  'perfumes','fragancia','fragancias','aroma','colonia','olor',
+]);
+
+function tokenizeQuery(q) {
+  return (q || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')   // sin tildes para matcheo más permisivo
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3 && !STOPWORDS_ES.has(t));
+}
+
+/* Indexa el blob textual de cada perfume una sola vez tras la carga. */
+function ensureSearchIndex(catalog) {
+  if (catalog.__indexed) return;
+  for (const p of catalog) {
+    const parts = [
+      p.nombre, p.casa, p.familia,
+      ...(p.notas?.salida || []),
+      ...(p.notas?.corazon || []),
+      ...(p.notas?.fondo || []),
+      ...(p.acordes || []),
+      ...(p.perfumistas || []),
+    ];
+    p.__blob = parts.join(' ').toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '');
+    p.__quality = (p.rating || 0) * Math.log1p(p.rating_count || 0);
+  }
+  catalog.__indexed = true;
+}
+
+/* Diversificación: cap de candidatos por misma casa para que los resultados
+   no estén dominados por 1-2 marcas con muchos flankers (Dior, Tom Ford…). */
+const MAX_PER_CASA = 3;
+
+function prefilter(query, filters, catalog, cap = LLM_CANDIDATE_CAP) {
+  ensureSearchIndex(catalog);
+  const tokens = tokenizeQuery(query);
+
+  let pool = catalog;
+  if (filters?.familia) pool = pool.filter((p) => p.familia === filters.familia);
+  if (filters?.gender)  pool = pool.filter((p) => p.genero === filters.gender || p.genero === 'unisex');
+  if (filters?.season)  pool = pool.filter((p) => (p.temporada || []).includes(filters.season));
+
+  // Si los filtros vacían el pool, retrocedemos a catalog sin filtros para no romper la búsqueda.
+  if (pool.length === 0) pool = catalog;
+
+  const scored = new Array(pool.length);
+  for (let i = 0; i < pool.length; i++) {
+    const p = pool[i];
+    let s = 0;
+    if (tokens.length) {
+      for (const t of tokens) if (p.__blob.indexOf(t) !== -1) s += 1;
+    }
+    // Prior de calidad reducido: rating × log(votos), pero con peso bajo para
+    // que un match textual fuerte mande sobre la popularidad bruta.
+    s += 0.01 * p.__quality;
+    // Pequeño jitter (≤0.5) para romper empates de forma no determinista
+    // y aportar variedad entre consultas similares.
+    s += Math.random() * 0.5;
+    scored[i] = [s, p];
+  }
+  scored.sort((a, b) => b[0] - a[0]);
+
+  // Diversificación por casa: máx MAX_PER_CASA candidatos del mismo brand.
+  const out = [];
+  const casaCount = new Map();
+  for (const [, p] of scored) {
+    const casa = p.casa || 'unknown';
+    const n = casaCount.get(casa) || 0;
+    if (n >= MAX_PER_CASA) continue;
+    casaCount.set(casa, n + 1);
+    out.push(p);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+/* ============================================================
+   LLAMADA A LA IA
+   ============================================================ */
+async function getRecommendations(query, filters, catalog) {
+  const candidates = prefilter(query, filters, catalog, LLM_CANDIDATE_CAP);
+  if (candidates.length === 0) {
+    throw new Error('No hay candidatos tras el prefiltro. Afloja los filtros o reformula.');
+  }
+
+  const compact = candidates.map((p) => ({
+    id: p.id,
+    nombre: p.nombre,
+    casa: p.casa,
+    año: p.año,
+    notas: p.notas,
+    familia: p.familia,
+    acordes: p.acordes,
+    temporada: p.temporada,
+    genero: p.genero,
+    rating: p.rating,
+    rating_count: p.rating_count,
+    similares_a: p.similares_a,
+  }));
+
+  const prompt = `Eres un experto perfumista profesional. Analiza la petición del usuario y el subconjunto de fragancias pre-filtrado, y devuelve EXCLUSIVAMENTE un array JSON con las 3 a 5 fragancias más relevantes, ordenadas de mayor a menor relevancia.
+
+Cada elemento del array debe tener exactamente este formato:
+{ "id": "<id_exacto_del_catalogo>", "score": <numero_0_100>, "reasoning": "<2-3 frases en español natural explicando por qué encaja con la petición concreta>" }
+
+Reglas:
+- Considera notas olfativas, familia, temporada, género y referencias a otros perfumes (campo similares_a).
+- Si el usuario menciona un perfume conocido, prioriza los que tengan notas/familia equivalente o aparezcan en similares_a.
+- El campo rating (0-10) y rating_count (votos) reflejan recepción del público; úsalos como prior secundario, NUNCA como criterio principal.
+- Respeta los filtros (estación, género, familia) cuando estén indicados.
+- El reasoning debe ser específico y mencionar notas o aspectos concretos de ese perfume que justifican el match. Nada genérico.
+- Responde SOLO el array JSON. Sin markdown, sin bloques de código, sin texto introductorio.
+
+PETICIÓN DEL USUARIO:
+"${query}"
+
+FILTROS APLICADOS:
+${JSON.stringify(filters)}
+
+CANDIDATOS (${compact.length} de ${catalog.length} en catálogo):
+${JSON.stringify(compact)}`;
+
+  // Schema explícito para que Gemini devuelva un array bien formado.
+  // Gemini espera tipos en MAYÚSCULAS (enum Type de la API).
+  const responseSchema = {
+    type: 'ARRAY',
+    items: {
+      type: 'OBJECT',
+      properties: {
+        id: { type: 'STRING' },
+        score: { type: 'INTEGER' },
+        reasoning: { type: 'STRING' }
+      },
+      required: ['id', 'score', 'reasoning']
+    }
+  };
+  const raw = await window.claude.complete(prompt, { responseSchema, maxOutputTokens: 8192 });
+
+  let cleaned = String(raw).trim();
+  // limpia fences ```json ... ``` por si acaso
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
+  // si hay texto antes/después, intenta extraer el array
+  const m = cleaned.match(/\[[\s\S]*\]/);
+  if (m) cleaned = m[0];
+
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    console.error('[LLM] Fallo al parsear JSON. Respuesta cruda:', raw);
+    // Fallback: si el JSON fue truncado mid-array, reparamos cerrando el array
+    // tras el último objeto bien formado.
+    try {
+      const lastClose = cleaned.lastIndexOf('}');
+      if (lastClose > 0) {
+        const repaired = cleaned.slice(0, lastClose + 1) + ']';
+        parsed = JSON.parse(repaired);
+        console.warn('[LLM] JSON truncado — reparado con', Array.isArray(parsed) ? parsed.length : '?', 'recomendaciones.');
+      } else {
+        throw e;
+      }
+    } catch (e2) {
+      throw new Error('La respuesta del perfumista venía truncada. Reintente la consulta.');
+    }
+  }
+  // Gemini con responseSchema puede envolver el array en {results: [...]}
+  // o {recommendations: [...]} — desempaquetamos si hace falta.
+  if (!Array.isArray(parsed) && parsed && typeof parsed === 'object') {
+    const arrField = Object.values(parsed).find((v) => Array.isArray(v));
+    if (arrField) parsed = arrField;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    console.error('[LLM] Respuesta no contiene array. Cruda:', raw);
+    throw new Error('El perfumista no ha devuelto recomendaciones. Reformule la consulta.');
+  }
+  // filtra resultados con id válido (debe estar en el catálogo)
+  const valid = parsed.filter((r) => r && r.id && CATALOG.some((p) => p.id === r.id));
+  if (valid.length === 0) {
+    throw new Error('Las recomendaciones no coinciden con el catálogo. Reintente.');
+  }
+  return valid.slice(0, 5);
+}
+
+/* ============================================================
+   FAMILIAS — tinte cromático del frame
+   ============================================================ */
+const FAMILY_TINT = {
+  gourmand:   { from: '#FFF3E0', to: '#FBDCBE', accent: '#C77F3E', soft: '#FDE9D2' },
+  oriental:   { from: '#FAF1DC', to: '#F0DDB0', accent: '#A2791B', soft: '#F6E8C7' },
+  amaderada:  { from: '#F2EDE2', to: '#D9CFB6', accent: '#7B6940', soft: '#EAE3D0' },
+  floral:     { from: '#FFEFF4', to: '#FBD0DD', accent: '#C25577', soft: '#FBDFE8' },
+  'cítrica':  { from: '#FBFCEA', to: '#E9EFA8', accent: '#8FA033', soft: '#F2F5C8' },
+  chipre:     { from: '#EFF6E9', to: '#CDE4C0', accent: '#557C49', soft: '#DDEAD0' },
+  'fougère':  { from: '#E9F4F1', to: '#C7E2DC', accent: '#3F7F73', soft: '#D4E8E2' },
+};
+const getTint = (fam) => FAMILY_TINT[fam] || { from: '#F5F6F8', to: '#EEEFF2', accent: '#6B7480', soft: '#F0F1F4' };
+
+/* ============================================================
+   COMPONENTE RAÍZ
+   ============================================================ */
+function TopNote() {
+  const [view, setView] = useState('search'); // 'search' | 'results' | 'archive' | 'catalog'
+  const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState({ familia: null, season: null, gender: null });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [results, setResults] = useState([]);
+  const [lastQuery, setLastQuery] = useState('');
+  const [lastFilters, setLastFilters] = useState(null);
+  const [favorites, setFavorites] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [detail, setDetail] = useState(null); // { perfume, score, reasoning }
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Carga del catálogo Parfumo
+  const [catalogState, setCatalogState] = useState({ status: 'loading', error: null, count: 0 });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(CATALOG_PATH, { cache: 'force-cache' });
+        if (!res.ok) throw new Error(`HTTP ${res.status} al cargar el catálogo.`);
+        const data = await res.json();
+        const arr = Array.isArray(data) ? data : data.perfumes;
+        if (!Array.isArray(arr) || arr.length === 0) {
+          throw new Error('El catálogo está vacío. Ejecuta scripts/ingest_parfumo.py.');
+        }
+        CATALOG = arr;
+        // Indexa el blob de búsqueda eagerly para que la primera query no pague el coste.
+        ensureSearchIndex(CATALOG);
+        setCatalogState({ status: 'ready', error: null, count: arr.length });
+      } catch (e) {
+        setCatalogState({
+          status: 'error',
+          error: e.message || 'No se ha podido cargar el catálogo.',
+          count: 0,
+        });
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const f = await loadStorage(STORAGE_KEYS.FAVORITES, []);
+      const h = await loadStorage(STORAGE_KEYS.HISTORY, []);
+      setFavorites(f);
+      setHistory(h);
+    })();
+  }, []);
+
+  // bloqueo de scroll cuando hay modal
+  useEffect(() => {
+    if (detail) {
+      const orig = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = orig; };
+    }
+  }, [detail]);
+
+  // ESC cierra modal
+  useEffect(() => {
+    if (!detail) return;
+    const onKey = (e) => { if (e.key === 'Escape') setDetail(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [detail]);
+
+  async function runQuery(q, f) {
+    const useF = f || filters;
+    setQuery(q);
+    setFilters(useF);
+    setLastQuery(q);
+    setLastFilters(useF);
+    setLoading(true);
+    setError(null);
+    setResults([]);
+    setView('results');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    try {
+      const recs = await getRecommendations(q, useF, CATALOG);
+      setResults(recs);
+      const entry = { query: q, filters: useF, timestamp: Date.now() };
+      const newHist = [entry, ...history.filter((h) => h.query !== q)].slice(0, 10);
+      setHistory(newHist);
+      await saveStorage(STORAGE_KEYS.HISTORY, newHist);
+    } catch (err) {
+      setError(err.message || 'No se ha podido completar la consulta.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const onSubmit = () => {
+    if (!query.trim() || loading) return;
+    if (catalogState.status !== 'ready') return;
+    runQuery(query.trim(), filters);
+  };
+
+  const onRetry = () => { if (lastQuery) runQuery(lastQuery, lastFilters); };
+
+  const toggleFavorite = async (id) => {
+    const newFavs = favorites.includes(id) ? favorites.filter((f) => f !== id) : [...favorites, id];
+    setFavorites(newFavs);
+    await saveStorage(STORAGE_KEYS.FAVORITES, newFavs);
+  };
+
+  const onCardOpen = (data) => setDetail(data);
+  const onCloseDetail = () => setDetail(null);
+
+  const onSimilar = (perfume) => {
+    setDetail(null);
+    const q = `Recomiéndame fragancias similares a ${perfume.nombre} de ${perfume.casa}, con perfil olfativo equivalente; incluye opciones de distintas casas.`;
+    runQuery(q, { familia: null, season: null, gender: null });
+  };
+
+  const onRunHistory = (h) => runQuery(h.query, h.filters);
+
+  const onPickExample = (ex) => {
+    setQuery(ex);
+    // foco implícito al cambiar el value
+  };
+
+  if (catalogState.status === 'loading') {
+    return (
+      <div style={{ background: 'var(--bg)', color: 'var(--ink)', minHeight: '100vh' }}>
+        <ThemeStyles />
+        <div className="__boot" style={{ minHeight: '100vh' }}>topnote · cargando catálogo…</div>
+      </div>
+    );
+  }
+
+  if (catalogState.status === 'error') {
+    return (
+      <div style={{ background: 'var(--bg)', color: 'var(--ink)', minHeight: '100vh' }}>
+        <ThemeStyles />
+        <main className="tn-main" style={{ padding: '120px 40px' }}>
+          <h1 style={{ fontSize: 36, marginBottom: 16, letterSpacing: '-0.02em' }}>No se ha podido cargar el catálogo</h1>
+          <p style={{ color: 'var(--ink-mute)', fontSize: 16, marginBottom: 28, maxWidth: 640 }}>
+            {catalogState.error}
+          </p>
+          <p style={{ color: 'var(--ink-soft)', fontSize: 14, maxWidth: 640 }}>
+            Genera el catálogo siguiendo las instrucciones del <code>README.md</code>:<br />
+            <code style={{ background: 'var(--bg-soft)', padding: '2px 8px', borderRadius: 4 }}>
+              python scripts/ingest_parfumo.py
+            </code>
+            <br />
+            Y sirve la app por HTTP (no <code>file://</code>):
+            <br />
+            <code style={{ background: 'var(--bg-soft)', padding: '2px 8px', borderRadius: 4 }}>
+              python -m http.server 8000
+            </code>
+          </p>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: 'var(--bg)', color: 'var(--ink)', minHeight: '100vh' }}>
+      <ThemeStyles />
+      <Header
+        view={view}
+        setView={setView}
+        favoritesCount={favorites.length}
+        historyCount={history.length}
+        onToggleFilters={() => setShowFilters((s) => !s)}
+      />
+
+      {view === 'search' && (
+        <SearchView
+          query={query}
+          setQuery={setQuery}
+          onSubmit={onSubmit}
+          loading={loading}
+          error={error}
+          onRetry={onRetry}
+          filters={filters}
+          setFilters={setFilters}
+          showFilters={showFilters}
+          setShowFilters={setShowFilters}
+          onExample={onPickExample}
+        />
+      )}
+
+      {view === 'results' && (
+        <ResultsView
+          query={lastQuery || query}
+          filters={lastFilters || filters}
+          results={results}
+          loading={loading}
+          error={error}
+          onBack={() => setView('search')}
+          onRetry={onRetry}
+          onCardOpen={onCardOpen}
+          favorites={favorites}
+          toggleFavorite={toggleFavorite}
+        />
+      )}
+
+      {view === 'archive' && (
+        <ArchiveView
+          favorites={favorites}
+          history={history}
+          toggleFavorite={toggleFavorite}
+          onCardOpen={onCardOpen}
+          onRunHistory={onRunHistory}
+          onGoSearch={() => setView('search')}
+        />
+      )}
+
+      {view === 'catalog' && (
+        <CatalogView
+          favorites={favorites}
+          toggleFavorite={toggleFavorite}
+          onCardOpen={onCardOpen}
+          onGoSearch={() => setView('search')}
+        />
+      )}
+
+      {detail && (
+        <DetailModal
+          {...detail}
+          isFavorite={favorites.includes(detail.perfume.id)}
+          onToggleFavorite={() => toggleFavorite(detail.perfume.id)}
+          onSimilar={() => onSimilar(detail.perfume)}
+          onClose={onCloseDetail}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   ESTILOS GLOBALES — clonando el lenguaje visual del HTML original
+   ============================================================ */
+function ThemeStyles() {
+  return (
+    <style>{`
+      :root {
+        --bg:         #FFFFFF;
+        --bg-soft:    #F5F6F8;
+        --bg-card:    #FAFAFC;
+        --ink:        #0A0F1F;
+        --ink-mute:   #6B7480;
+        --ink-soft:   #2A2F3F;
+        --line:       #EEEFF2;
+        --blue:       #4FB5E8;
+        --blue-press: #2E9BD9;
+        --blue-soft:  #E5F4FD;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        font-size: 15px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        font-feature-settings: "ss01", "cv11";
+      }
+      button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+      input { font: inherit; }
+
+      /* Layout */
+      .tn-main { max-width: 1400px; margin: 0 auto; padding: 0 40px; }
+
+      /* ─── Header ───────────────────────────────────────────────── */
+      .tn-header {
+        position: sticky; top: 0; z-index: 50;
+        background: rgba(255,255,255,0.85);
+        backdrop-filter: saturate(1.4) blur(12px);
+        -webkit-backdrop-filter: saturate(1.4) blur(12px);
+        border-bottom: 1px solid var(--line);
+      }
+      .tn-head {
+        max-width: 1400px; margin: 0 auto;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 18px 40px; gap: 24px;
+      }
+      .tn-brand {
+        display: flex; align-items: center; gap: 9px;
+        font-weight: 600; font-size: 17px; letter-spacing: -0.02em;
+        color: var(--ink);
+      }
+      .tn-brand-dot {
+        width: 10px; height: 10px; border-radius: 50%;
+        background: var(--blue);
+        box-shadow: 0 0 0 4px rgba(79,181,232,0.18);
+      }
+      .tn-nav { display: flex; gap: 2px; font-size: 14px; font-weight: 500; }
+      .tn-nav button {
+        padding: 8px 14px; border-radius: 8px; color: var(--ink-mute);
+        transition: color 0.15s ease, background 0.15s ease;
+      }
+      .tn-nav button:hover { color: var(--ink); }
+      .tn-nav button.on { color: var(--ink); background: var(--bg-soft); }
+      .tn-nav button .pip {
+        display: inline-block; margin-left: 6px;
+        background: var(--blue); color: #fff;
+        font-size: 10.5px; font-weight: 600;
+        padding: 1px 6px; border-radius: 999px;
+        vertical-align: 1px;
+      }
+      .tn-head-r { display: flex; align-items: center; gap: 10px; }
+      .tn-iconbtn {
+        width: 38px; height: 38px; border-radius: 10px;
+        display: inline-flex; align-items: center; justify-content: center;
+        color: var(--ink-mute);
+        transition: background 0.15s ease, color 0.15s ease;
+        position: relative;
+      }
+      .tn-iconbtn:hover { background: var(--bg-soft); color: var(--ink); }
+      .tn-iconbtn.on { background: var(--blue-soft); color: var(--blue-press); }
+      .tn-iconbtn .badge-num {
+        position: absolute; top: 4px; right: 4px;
+        min-width: 14px; height: 14px; padding: 0 3px;
+        border-radius: 999px; background: var(--blue); color: #fff;
+        font-size: 9.5px; font-weight: 700; line-height: 14px;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .tn-av {
+        width: 34px; height: 34px; border-radius: 50%;
+        background: linear-gradient(135deg, var(--blue), #A7DDFC);
+        color: #fff; font-weight: 600; font-size: 12px; letter-spacing: 0.02em;
+        display: flex; align-items: center; justify-content: center;
+      }
+
+      /* ─── Hero ─────────────────────────────────────────────────── */
+      .tn-hero { padding: 96px 0 64px; display: grid; gap: 0; position: relative; }
+
+      /* Home hero: dos columnas con animación a la derecha. La vista Archive
+         sigue usando .tn-hero sin modificador (una columna). */
+      .tn-hero.tn-hero--home {
+        grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+        gap: 56px;
+        align-items: center;
+      }
+      .tn-hero--home .tn-hero-left  { display: flex; flex-direction: column; min-width: 0; }
+      .tn-hero--home .tn-hero-right { display: flex; align-items: center; justify-content: center;
+                                      position: relative; min-width: 0; }
+
+      .tn-pill {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 6px 12px 6px 8px; border-radius: 999px;
+        background: var(--bg-soft);
+        font-size: 12.5px; color: var(--ink-mute); font-weight: 500;
+        width: fit-content; align-self: flex-start;
+      }
+      .tn-pill .dot {
+        width: 8px; height: 8px; border-radius: 50%; background: var(--blue);
+        animation: tn-ping 1.8s infinite;
+      }
+      @keyframes tn-ping {
+        0% { box-shadow: 0 0 0 0 rgba(79,181,232,0.5); }
+        70% { box-shadow: 0 0 0 9px rgba(79,181,232,0); }
+        100% { box-shadow: 0 0 0 0 rgba(79,181,232,0); }
+      }
+      .tn-title {
+        font-size: clamp(60px, 7.5vw, 104px);
+        line-height: 0.94; letter-spacing: -0.045em; font-weight: 600;
+        margin-top: 28px; max-width: 12ch; text-wrap: balance;
+      }
+      .tn-title em { font-style: normal; color: var(--blue); }
+      .tn-sub {
+        color: var(--ink-mute); font-size: 17px; margin-top: 20px; max-width: 520px;
+      }
+
+      /* ─── Hero bottle 3D (Three.js canvas) ─────────────────────── */
+      .tn-bottle-stage {
+        width: 100%;
+        max-width: 420px;
+        aspect-ratio: 5 / 7;
+        position: relative;
+        margin: 0 auto;
+      }
+      .tn-bottle-stage::before {
+        /* Halo difuso bajo la botella (sombra ambiental). */
+        content: ""; position: absolute; left: 18%; right: 18%;
+        bottom: 4%; height: 26px; border-radius: 50%;
+        background: radial-gradient(ellipse at center, rgba(10,15,31,0.18), transparent 70%);
+        filter: blur(8px);
+        pointer-events: none;
+        z-index: 0;
+      }
+      .tn-bottle-stage::after {
+        /* Tinte azul atmosférico que envuelve la botella. */
+        content: ""; position: absolute; left: 8%; right: 8%;
+        top: 32%; height: 50%; border-radius: 50%;
+        background: radial-gradient(ellipse at center, rgba(79,181,232,0.13), transparent 65%);
+        filter: blur(20px);
+        pointer-events: none;
+        z-index: 0;
+      }
+      .tn-bottle-3d {
+        position: relative; z-index: 1;
+        width: 100%; height: 100%;
+      }
+      .tn-bottle-3d canvas {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+      }
+
+      /* Composer */
+      .tn-composer {
+        margin-top: 44px; max-width: 820px;
+        display: grid; grid-template-columns: 1fr auto;
+        gap: 14px; align-items: center;
+        border-bottom: 1.5px solid var(--ink);
+        padding-bottom: 14px;
+        transition: border-color 0.2s ease;
+      }
+      .tn-composer:focus-within { border-color: var(--blue); }
+      .tn-composer input {
+        width: 100%; border: 0; outline: 0; background: transparent;
+        font-size: 22px; font-weight: 400; color: var(--ink);
+        padding: 14px 0; letter-spacing: -0.01em;
+      }
+      .tn-composer input::placeholder { color: var(--ink-mute); }
+      .tn-go {
+        width: 54px; height: 54px; border-radius: 50%;
+        background: var(--blue); color: #fff;
+        display: inline-flex; align-items: center; justify-content: center;
+        transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+        box-shadow: 0 6px 20px rgba(79,181,232,0.45);
+      }
+      .tn-go:hover:not(:disabled) { background: var(--blue-press); transform: translateX(3px); }
+      .tn-go:disabled { background: var(--ink-mute); box-shadow: none; cursor: not-allowed; opacity: 0.55; }
+      .tn-go.loading { animation: tn-pulse 1.5s ease-in-out infinite; }
+      @keyframes tn-pulse {
+        0%, 100% { transform: scale(1); box-shadow: 0 6px 20px rgba(79,181,232,0.45); }
+        50% { transform: scale(1.05); box-shadow: 0 6px 28px rgba(79,181,232,0.65); }
+      }
+
+      /* Tags */
+      .tn-tags {
+        margin-top: 22px;
+        display: flex; flex-wrap: wrap; gap: 8px; max-width: 820px;
+      }
+      .tn-tag {
+        font-size: 13.5px; color: var(--ink-mute); font-weight: 500;
+        padding: 8px 14px; border-radius: 999px;
+        background: var(--bg-soft);
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .tn-tag:hover { background: var(--blue-soft); color: var(--blue-press); }
+      .tn-tag.act { background: var(--ink); color: #fff; }
+      .tn-tag.icon { display: inline-flex; align-items: center; gap: 6px; }
+
+      /* Filter panel */
+      .tn-filters {
+        margin-top: 24px; max-width: 820px;
+        background: var(--bg-card); border: 1px solid var(--line); border-radius: 14px;
+        padding: 20px 22px;
+        animation: tn-fadeDown 0.25s ease-out;
+      }
+      @keyframes tn-fadeDown {
+        from { opacity: 0; transform: translateY(-6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .tn-filter-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px 28px; }
+      @media (min-width: 760px) { .tn-filter-grid { grid-template-columns: repeat(3, 1fr); } }
+      .tn-flabel {
+        font-size: 11px; font-weight: 600; color: var(--ink-mute);
+        text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;
+      }
+      .tn-fchips { display: flex; flex-wrap: wrap; gap: 6px; }
+      .tn-fchip {
+        font-size: 12.5px; padding: 6px 11px; border-radius: 999px;
+        background: var(--bg); color: var(--ink-soft);
+        border: 1px solid var(--line);
+        transition: all 0.15s ease;
+      }
+      .tn-fchip:hover { border-color: var(--blue); color: var(--blue-press); }
+      .tn-fchip.on {
+        background: var(--ink); color: #fff; border-color: var(--ink);
+      }
+      .tn-clear {
+        margin-top: 14px; font-size: 12.5px; color: var(--ink-mute);
+        display: inline-flex; align-items: center; gap: 4px;
+      }
+      .tn-clear:hover { color: var(--ink); }
+
+      /* Error banner */
+      .tn-error {
+        margin-top: 28px; max-width: 820px;
+        border-radius: 12px; padding: 16px 20px;
+        background: #FFF2EF; border: 1px solid #F2C5BA; color: #8C2D14;
+        display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      }
+      .tn-error b { font-weight: 600; }
+      .tn-error button {
+        font-size: 13px; font-weight: 500; color: #8C2D14;
+        text-decoration: underline;
+      }
+
+      /* ─── Split section header ─────────────────────────────────── */
+      .tn-split {
+        margin-top: 96px; padding-top: 48px;
+        border-top: 1px solid var(--line);
+        display: flex; justify-content: space-between; align-items: baseline;
+        gap: 18px; flex-wrap: wrap;
+      }
+      .tn-split h2 {
+        font-size: 42px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.05;
+      }
+      .tn-split h2 .count {
+        color: var(--ink-mute); font-weight: 500;
+        margin-left: 14px; font-size: 18px; vertical-align: 8px;
+      }
+      .tn-split .meta {
+        font-size: 14px; color: var(--ink-mute);
+        display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+      }
+      .tn-split .meta b { color: var(--ink); font-weight: 500; }
+      .tn-sort {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 9px 14px; border-radius: 10px;
+        background: var(--bg-soft); font-size: 13.5px; font-weight: 500;
+        color: var(--ink);
+        transition: background 0.15s ease;
+      }
+      .tn-sort:hover { background: var(--blue-soft); color: var(--blue-press); }
+
+      /* ─── Card grid ────────────────────────────────────────────── */
+      .tn-grid {
+        margin-top: 36px; padding-bottom: 64px;
+        display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px;
+      }
+      .tn-card {
+        cursor: pointer; display: flex; flex-direction: column; gap: 14px;
+        position: relative;
+        transition: transform 0.25s cubic-bezier(0.2, 0.7, 0.3, 1);
+        text-align: left;
+      }
+      .tn-card:hover { transform: translateY(-4px); }
+
+      .tn-frame {
+        position: relative; aspect-ratio: 4 / 5;
+        border-radius: 18px; overflow: hidden;
+        box-shadow: 0 0 0 1px var(--line);
+        display: flex; align-items: center; justify-content: center;
+      }
+      .tn-frame::after {
+        content: ""; position: absolute; inset: 0; z-index: 1;
+        background: radial-gradient(ellipse at 50% 110%, rgba(79,181,232,0.10), transparent 65%);
+        pointer-events: none;
+      }
+      .tn-frame::before {
+        content: ""; position: absolute; inset: 0; z-index: 0;
+        background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0) 50%);
+        pointer-events: none;
+      }
+      .tn-frame svg.tn-bottle {
+        position: relative; z-index: 1;
+        width: 50%; height: auto;
+        filter: drop-shadow(0 10px 22px rgba(10,15,31,0.10));
+      }
+      .tn-frame .tn-img {
+        position: relative; z-index: 1;
+        width: 78%; max-width: 280px; height: auto; max-height: 86%;
+        object-fit: contain;
+        filter: drop-shadow(0 14px 28px rgba(10,15,31,0.18));
+      }
+
+      .tn-badge {
+        position: absolute; left: 14px; top: 14px; z-index: 3;
+        background: rgba(255,255,255,0.92);
+        -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+        border-radius: 999px; padding: 6px 11px 6px 8px;
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 12.5px; font-weight: 600; letter-spacing: -0.005em;
+        color: var(--ink);
+        box-shadow: 0 2px 8px rgba(10,15,31,0.06);
+      }
+      .tn-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); }
+      .tn-badge.top .dot { box-shadow: 0 0 0 3px rgba(79,181,232,0.28); }
+
+      .tn-heart {
+        position: absolute; right: 14px; top: 14px; z-index: 3;
+        width: 34px; height: 34px; border-radius: 50%;
+        background: rgba(255,255,255,0.92);
+        -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+        display: inline-flex; align-items: center; justify-content: center;
+        color: var(--ink-mute);
+        box-shadow: 0 2px 8px rgba(10,15,31,0.06);
+        transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+      }
+      .tn-heart:hover { color: var(--blue-press); transform: scale(1.06); }
+      .tn-heart.on { color: #fff; background: var(--blue); }
+
+      .tn-corner {
+        position: absolute; left: 14px; bottom: 14px; z-index: 3;
+        font-size: 10.5px; font-weight: 600; color: var(--ink);
+        background: rgba(255,255,255,0.85);
+        -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+        padding: 4px 9px; border-radius: 999px; letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
+      .tn-name {
+        display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+      }
+      .tn-who {
+        font-size: 19px; font-weight: 600; letter-spacing: -0.015em;
+        line-height: 1.15; color: var(--ink);
+      }
+      .tn-who small {
+        display: block; font-size: 13px; font-weight: 500; color: var(--ink-mute);
+        margin-top: 2px; letter-spacing: 0;
+      }
+      .tn-px {
+        font-size: 18px; font-weight: 600; letter-spacing: -0.015em;
+        color: var(--ink); white-space: nowrap;
+      }
+      .tn-notes {
+        font-size: 13.5px; color: var(--ink-mute); line-height: 1.5; margin-top: -4px;
+      }
+
+      /* Skeleton */
+      .tn-skel {
+        background: linear-gradient(90deg, var(--bg-soft) 0%, #F0F1F4 50%, var(--bg-soft) 100%);
+        background-size: 200% 100%;
+        animation: tn-shimmer 1.4s linear infinite;
+        border-radius: 8px;
+      }
+      @keyframes tn-shimmer {
+        from { background-position: 200% 0; }
+        to   { background-position: -200% 0; }
+      }
+      .tn-skel-frame {
+        aspect-ratio: 4 / 5; border-radius: 18px; box-shadow: 0 0 0 1px var(--line);
+      }
+      .tn-skel-line { height: 14px; }
+      .tn-skel-line.sm { width: 60%; height: 11px; }
+
+      /* History list */
+      .tn-hist {
+        margin-top: 24px; padding-bottom: 64px;
+        display: grid; gap: 10px; max-width: 980px;
+      }
+      .tn-hist button {
+        display: flex; align-items: center; gap: 14px; width: 100%;
+        padding: 14px 18px; border-radius: 12px;
+        background: var(--bg-soft);
+        text-align: left; transition: background 0.15s ease;
+      }
+      .tn-hist button:hover { background: var(--blue-soft); }
+      .tn-hist .hi { color: var(--ink-mute); flex-shrink: 0; }
+      .tn-hist .hq {
+        flex: 1; font-size: 14.5px; color: var(--ink); font-weight: 500;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .tn-hist .hd { font-size: 12px; color: var(--ink-mute); white-space: nowrap; }
+
+      /* Empty state */
+      .tn-empty {
+        margin-top: 36px; padding: 56px 28px;
+        text-align: center; background: var(--bg-card);
+        border: 1px dashed var(--line); border-radius: 16px;
+      }
+      .tn-empty p { color: var(--ink-mute); font-size: 16px; margin-bottom: 18px; }
+      .tn-empty button {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 10px 18px; border-radius: 999px;
+        background: var(--ink); color: #fff; font-size: 13.5px; font-weight: 500;
+        transition: background 0.15s ease;
+      }
+      .tn-empty button:hover { background: #1F2540; }
+
+      /* ─── Modal ────────────────────────────────────────────────── */
+      .tn-modal-bg {
+        position: fixed; inset: 0; z-index: 100;
+        background: rgba(10,15,31,0.45);
+        -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+        display: flex; align-items: center; justify-content: center;
+        padding: 24px;
+        animation: tn-fadeIn 0.2s ease-out;
+      }
+      @keyframes tn-fadeIn { from { opacity: 0; } to { opacity: 1; } }
+      .tn-modal {
+        background: var(--bg); border-radius: 22px; overflow: hidden;
+        width: 100%; max-width: 1080px; max-height: 92vh; overflow-y: auto;
+        box-shadow: 0 30px 80px rgba(10,15,31,0.25);
+        position: relative;
+        animation: tn-modalUp 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
+      }
+      @keyframes tn-modalUp {
+        from { opacity: 0; transform: translateY(20px) scale(0.98); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      .tn-modal-close {
+        position: absolute; top: 18px; right: 18px; z-index: 5;
+        width: 38px; height: 38px; border-radius: 50%;
+        background: rgba(255,255,255,0.85); color: var(--ink-mute);
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 2px 10px rgba(10,15,31,0.10);
+        transition: color 0.15s ease, transform 0.15s ease;
+      }
+      .tn-modal-close:hover { color: var(--ink); transform: rotate(90deg); }
+
+      .tn-modal-grid {
+        display: grid; grid-template-columns: 1fr; gap: 0;
+      }
+      @media (min-width: 880px) {
+        .tn-modal-grid { grid-template-columns: 0.85fr 1fr; min-height: 600px; }
+      }
+      .tn-modal-frame {
+        position: relative; padding: 60px 40px;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        min-height: 360px;
+      }
+      .tn-modal-frame::after {
+        content: ""; position: absolute; inset: 0;
+        background: radial-gradient(ellipse at 50% 110%, rgba(79,181,232,0.18), transparent 65%);
+        pointer-events: none;
+      }
+      .tn-modal-frame svg.tn-bottle-lg { width: 200px; height: auto; position: relative; z-index: 1; }
+      .tn-modal-frame .tn-img-lg {
+        width: 78%; max-width: 320px; height: auto; max-height: 420px;
+        object-fit: contain; position: relative; z-index: 1;
+        filter: drop-shadow(0 18px 36px rgba(10,15,31,0.22));
+      }
+      .tn-modal-info {
+        padding: 36px 40px 40px;
+        display: flex; flex-direction: column; gap: 18px;
+      }
+      .tn-modal-info h2 {
+        font-size: 36px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.05;
+      }
+      .tn-modal-house { font-size: 14px; color: var(--ink-mute); margin-top: -8px; }
+      .tn-modal-desc { font-size: 15.5px; color: var(--ink-soft); line-height: 1.55; }
+
+      .tn-modal-meta {
+        display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 24px;
+        padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+      }
+      .tn-modal-meta > div { display: flex; flex-direction: column; gap: 3px; }
+      .tn-modal-meta .label {
+        font-size: 11px; color: var(--ink-mute); text-transform: uppercase;
+        letter-spacing: 0.08em; font-weight: 600;
+      }
+      .tn-modal-meta .value { font-size: 15px; color: var(--ink); font-weight: 500; }
+
+      .tn-pyr-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+      .tn-pyr-col { display: flex; flex-direction: column; gap: 6px; }
+      .tn-pyr-h {
+        font-size: 11px; color: var(--blue-press); text-transform: uppercase;
+        letter-spacing: 0.08em; font-weight: 600;
+        padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px;
+      }
+      .tn-pyr-col li { font-size: 13.5px; color: var(--ink-soft); list-style: none; line-height: 1.45; }
+
+      .tn-reason {
+        background: var(--blue-soft); border-radius: 14px; padding: 18px 20px;
+      }
+      .tn-reason .label {
+        font-size: 11px; color: var(--blue-press); text-transform: uppercase;
+        letter-spacing: 0.08em; font-weight: 600; margin-bottom: 8px;
+        display: flex; align-items: center; gap: 6px;
+      }
+      .tn-reason p {
+        font-size: 14.5px; color: var(--ink); line-height: 1.55;
+      }
+
+      .tn-modal-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+      .tn-btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+        padding: 12px 20px; border-radius: 12px; font-size: 14px; font-weight: 500;
+        transition: all 0.18s ease;
+      }
+      .tn-btn-primary {
+        background: var(--ink); color: #fff;
+        box-shadow: 0 4px 14px rgba(10,15,31,0.20);
+      }
+      .tn-btn-primary:hover { background: #1F2540; transform: translateY(-1px); }
+      .tn-btn-ghost {
+        background: var(--bg-soft); color: var(--ink);
+      }
+      .tn-btn-ghost:hover { background: var(--blue-soft); color: var(--blue-press); }
+      .tn-btn-ghost.on { background: var(--blue); color: #fff; }
+
+      /* ─── Footer ───────────────────────────────────────────────── */
+      .tn-footer {
+        margin-top: 48px; padding: 28px 0 36px;
+        border-top: 1px solid var(--line);
+        display: flex; justify-content: space-between; align-items: center;
+        font-size: 12.5px; color: var(--ink-mute); flex-wrap: wrap; gap: 10px;
+      }
+      .tn-footer .dot {
+        display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+        background: var(--blue); margin: 0 8px; vertical-align: 2px;
+      }
+
+      /* ─── Catálogo ─────────────────────────────────────────────── */
+      .tn-title-compact {
+        font-size: clamp(44px, 5.5vw, 76px);
+        max-width: 14ch;
+      }
+
+      .tn-cat-bar {
+        margin-top: 36px;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 16px 28px;
+      }
+      .tn-cat-search-wrap {
+        position: relative;
+        display: flex; align-items: center;
+        background: var(--bg-soft);
+        border-radius: 12px;
+        padding: 0 12px;
+        transition: background 0.15s ease, box-shadow 0.15s ease;
+      }
+      .tn-cat-search-wrap:focus-within {
+        background: var(--bg);
+        box-shadow: 0 0 0 1.5px var(--blue), 0 4px 14px rgba(79,181,232,0.12);
+      }
+      .tn-cat-search-wrap > svg { color: var(--ink-mute); flex-shrink: 0; }
+      .tn-cat-search {
+        width: 100%;
+        border: 0; outline: 0; background: transparent;
+        padding: 14px 6px 14px 10px;
+        font-size: 15px; color: var(--ink);
+        letter-spacing: -0.005em;
+      }
+      .tn-cat-search::placeholder { color: var(--ink-mute); }
+      .tn-cat-search-clear {
+        width: 24px; height: 24px; border-radius: 50%;
+        display: inline-flex; align-items: center; justify-content: center;
+        color: var(--ink-mute); background: rgba(0,0,0,0.04);
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .tn-cat-search-clear:hover { background: var(--ink); color: #fff; }
+
+      .tn-cat-sort {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: var(--bg-soft);
+        border-radius: 12px;
+        padding: 4px;
+      }
+      .tn-cat-sort-label {
+        font-size: 11px; font-weight: 600; color: var(--ink-mute);
+        text-transform: uppercase; letter-spacing: 0.08em;
+        padding: 0 10px 0 8px;
+      }
+      .tn-cat-sort-btn {
+        font-size: 13px; font-weight: 500;
+        color: var(--ink-mute);
+        padding: 8px 12px; border-radius: 9px;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .tn-cat-sort-btn:hover { color: var(--ink); }
+      .tn-cat-sort-btn.on {
+        background: var(--bg); color: var(--ink);
+        box-shadow: 0 1px 2px rgba(10,15,31,0.06);
+      }
+
+      .tn-cat-filters {
+        margin-top: 22px;
+        display: grid; gap: 14px 28px;
+        grid-template-columns: 1fr;
+      }
+      @media (min-width: 760px) {
+        .tn-cat-filters { grid-template-columns: repeat(2, 1fr); }
+      }
+      @media (min-width: 1120px) {
+        .tn-cat-filters { grid-template-columns: repeat(4, 1fr); }
+      }
+      .tn-cat-filter-row { min-width: 0; }
+      .tn-cat-filter-label {
+        font-size: 11px; font-weight: 600; color: var(--ink-mute);
+        text-transform: uppercase; letter-spacing: 0.08em;
+        margin-bottom: 10px;
+      }
+      .tn-cat-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+      .tn-cat-meta {
+        margin-top: 32px; padding: 18px 0;
+        border-top: 1px solid var(--line);
+        display: flex; justify-content: space-between; align-items: center;
+        font-size: 14px; color: var(--ink); flex-wrap: wrap; gap: 12px;
+      }
+      .tn-cat-meta-l { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+      .tn-cat-meta b { font-weight: 600; }
+
+      /* ─── Paginación ───────────────────────────────────────────── */
+      .tn-pagination {
+        margin: 36px 0 24px;
+        display: flex; justify-content: center; align-items: center;
+        gap: 6px; flex-wrap: wrap;
+      }
+      .tn-pag-btn {
+        min-width: 38px; height: 38px;
+        padding: 0 12px;
+        border-radius: 10px;
+        font-size: 13.5px; font-weight: 500;
+        color: var(--ink); background: var(--bg-soft);
+        display: inline-flex; align-items: center; justify-content: center;
+        transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+      }
+      .tn-pag-btn:hover:not(:disabled):not(.on) {
+        background: var(--blue-soft); color: var(--blue-press);
+      }
+      .tn-pag-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+      .tn-pag-btn.on {
+        background: var(--ink); color: #fff;
+        box-shadow: 0 2px 8px rgba(10,15,31,0.18);
+      }
+      .tn-pag-arrow { color: var(--ink-mute); }
+      .tn-pag-ellipsis {
+        min-width: 26px; height: 38px;
+        display: inline-flex; align-items: center; justify-content: center;
+        color: var(--ink-mute); font-size: 14px; user-select: none;
+      }
+
+      /* ─── Responsive ───────────────────────────────────────────── */
+      @media (max-width: 980px) {
+        .tn-head { padding: 14px 24px; }
+        .tn-main { padding: 0 24px; }
+        .tn-grid { grid-template-columns: repeat(2, 1fr); gap: 18px; }
+        .tn-split { flex-direction: column; align-items: flex-start; gap: 14px; }
+        .tn-hero { padding: 48px 0 32px; }
+        .tn-composer input { font-size: 18px; }
+        .tn-title { font-size: clamp(48px, 11vw, 72px); }
+        /* En móvil el hero pasa a una columna; la botella se mueve debajo
+           de las acciones para que el composer permanezca above-the-fold. */
+        .tn-hero.tn-hero--home {
+          grid-template-columns: 1fr;
+          gap: 36px;
+        }
+        .tn-hero--home .tn-hero-right { order: 2; }
+        .tn-hero--home .tn-hero-left  { order: 1; }
+        .tn-bottle-stage { max-width: 260px; margin: 0 auto; }
+        .tn-cat-bar {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+        .tn-cat-sort { flex-wrap: wrap; }
+      }
+      @media (max-width: 560px) {
+        .tn-grid { grid-template-columns: 1fr; }
+        .tn-nav { display: none; }
+        .tn-modal-info { padding: 24px 22px 30px; }
+        .tn-modal-info h2 { font-size: 28px; }
+        .tn-modal-meta { grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+        .tn-modal-frame { min-height: 280px; padding: 40px 20px; }
+        .tn-modal-frame svg.tn-bottle-lg { width: 150px; }
+        .tn-modal-frame .tn-img-lg { max-width: 220px; max-height: 280px; }
+        .tn-bottle-stage { max-width: 220px; }
+      }
+
+      /* Focus visible */
+      *:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
+      .tn-composer input:focus-visible { outline: none; }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; border: 2px solid var(--bg); }
+      ::-webkit-scrollbar-thumb:hover { background: var(--ink-mute); }
+    `}</style>
+  );
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+function Header({ view, setView, favoritesCount, historyCount, onToggleFilters }) {
+  return (
+    <header className="tn-header">
+      <div className="tn-head">
+        <button className="tn-brand" onClick={() => setView('search')}>
+          <span className="tn-brand-dot" />
+          topnote
+        </button>
+        <nav className="tn-nav">
+          <button className={view === 'search' ? 'on' : ''} onClick={() => setView('search')}>
+            Buscar
+          </button>
+          <button className={view === 'catalog' ? 'on' : ''} onClick={() => setView('catalog')}>
+            Catálogo
+          </button>
+          <button className={view === 'results' ? 'on' : ''} onClick={() => setView('results')}>
+            Resultados
+          </button>
+          <button className={view === 'archive' ? 'on' : ''} onClick={() => setView('archive')}>
+            Guardados
+            {favoritesCount > 0 && <span className="pip">{favoritesCount}</span>}
+          </button>
+        </nav>
+        <div className="tn-head-r">
+          <button className="tn-iconbtn" title="Filtros" onClick={onToggleFilters}>
+            <SvgFilter />
+          </button>
+          <button className="tn-iconbtn" title="Historial" onClick={() => setView('archive')}>
+            <Clock size={18} />
+            {historyCount > 0 && <span className="badge-num">{historyCount}</span>}
+          </button>
+          <div className="tn-av">A</div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/* ============================================================
+   SEARCH VIEW
+   ============================================================ */
+const QUICK_TAGS = [
+  { label: 'Dulce para invierno', q: 'Algo dulce y cálido para invierno' },
+  { label: 'Como Sauvage pero más maduro', q: 'Algo como Sauvage pero más maduro y menos común' },
+  { label: 'Oficina elegante', q: 'Perfume elegante y discreto para oficina' },
+  { label: 'Gourmand de invierno', q: 'Algo gourmand de vainilla y tabaco para invierno que dure todo el día' },
+  { label: 'Amaderado intenso', q: 'Un amaderado intenso con oud y sándalo para noches frías' },
+  { label: 'Floral primera cita', q: 'Perfume floral para una primera cita en primavera, sin ser empalagoso' },
+];
+
+const PLACEHOLDERS = [
+  'Descríbelo. Dulce para invierno, parecido a Sauvage pero más complejo…',
+  'Un perfume gourmand de vainilla y café para tardes frías…',
+  'Algo masculino para la oficina, fresco pero con presencia…',
+  'Un oriental especiado con incienso y ámbar, poco común…',
+];
+
+function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filters, setFilters, showFilters, setShowFilters, onExample }) {
+  const inputRef = useRef(null);
+  const [phIdx, setPhIdx] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => setPhIdx((i) => (i + 1) % PLACEHOLDERS.length), 4500);
+    return () => clearInterval(t);
+  }, []);
+
+  const activeQ = query.trim().toLowerCase();
+  const activeFilterCount = Object.values(filters).filter((v) => v !== null).length;
+
+  return (
+    <main className="tn-main">
+      <section className="tn-hero tn-hero--home">
+        <div className="tn-hero-left">
+          <span className="tn-pill">
+            <span className="dot" />
+            IA · En línea
+          </span>
+          <h1 className="tn-title">
+            Encuentra tu <em>aroma.</em>
+          </h1>
+          <p className="tn-sub">
+            Describe lo que buscas en lenguaje natural. Cruzamos {fmtInt(CATALOG.length)} fragancias del
+            catálogo y devolvemos las más afines, con justificación.
+          </p>
+
+          <form
+            className="tn-composer"
+            onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
+          >
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={PLACEHOLDERS[phIdx]}
+              disabled={loading}
+              autoFocus
+            />
+            <button
+              type="submit"
+              className={'tn-go' + (loading ? ' loading' : '')}
+              disabled={!query.trim() || loading}
+              aria-label="Buscar"
+            >
+              <SvgArrowRightThick />
+            </button>
+          </form>
+
+          <div className="tn-tags">
+            {QUICK_TAGS.map((t, i) => {
+              const isActive = activeQ === t.q.toLowerCase();
+              return (
+                <button
+                  key={i}
+                  className={'tn-tag' + (isActive ? ' act' : '')}
+                  onClick={() => onExample(t.q)}
+                  type="button"
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+            <button
+              className={'tn-tag icon' + (showFilters ? ' act' : '')}
+              onClick={() => setShowFilters(!showFilters)}
+              type="button"
+              aria-expanded={showFilters}
+            >
+              <SvgFilter size={13} stroke={2} /> Filtros
+              {activeFilterCount > 0 && (
+                <span style={{
+                  marginLeft: 4, background: showFilters ? '#fff' : 'var(--blue)',
+                  color: showFilters ? 'var(--ink)' : '#fff',
+                  fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 999,
+                }}>{activeFilterCount}</span>
+              )}
+            </button>
+          </div>
+
+          {showFilters && (
+            <FilterPanel filters={filters} setFilters={setFilters} />
+          )}
+
+          {error && (
+            <div className="tn-error">
+              <span><b>Error:</b> {error}</span>
+              <button onClick={onRetry || onSubmit}>Reintentar →</button>
+            </div>
+          )}
+        </div>
+
+        <div className="tn-hero-right" aria-hidden="true">
+          <div className="tn-bottle-stage">
+            <HeroBottle3D />
+          </div>
+        </div>
+      </section>
+
+      <Footer />
+    </main>
+  );
+}
+
+/* ============================================================
+   HERO BOTTLE 3D — Three.js (r147 UMD, expone window.THREE).
+
+   Construye un flacon de cristal redondo (LatheGeometry rotacional)
+   con cap negro y nozzle lateral. El líquido es una segunda lathe
+   recortada por un plano de clipping horizontal que sube y baja
+   para simular el llenado.
+
+   Loop (10s):
+     · 0.0–1.0s  vacío
+     · 1.0–5.0s  rellenado (smoothstep)
+     · 5.0–8.0s  lleno · partículas de aroma emergen del nozzle
+     · 8.0–9.5s  evaporación (opacity → 0)
+     · 9.5–10s   pausa, reinicia
+
+   Honra prefers-reduced-motion: muestra el frasco lleno estático.
+   ============================================================ */
+function HeroBottle3D() {
+  const mountRef = useRef(null);
+
+  useEffect(() => {
+    const T = window.THREE;
+    const mount = mountRef.current;
+    if (!T || !mount) return;
+
+    // Si el navegador no soporta WebGL, salimos en silencio (el área queda vacía).
+    try {
+      const test = document.createElement('canvas');
+      const ctx = test.getContext('webgl') || test.getContext('experimental-webgl');
+      if (!ctx) return;
+    } catch (_e) { return; }
+
+    const reducedMotion =
+      window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // ── Renderer / scene / camera ─────────────────────────────
+    const width  = mount.clientWidth  || 360;
+    const height = mount.clientHeight || 500;
+
+    const scene = new T.Scene();
+    const camera = new T.PerspectiveCamera(34, width / height, 0.1, 100);
+    camera.position.set(1.0, 3.5, 9.6);
+    camera.lookAt(0, 2.4, 0);
+
+    const renderer = new T.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.localClippingEnabled = true;
+    mount.appendChild(renderer.domElement);
+
+    // ── Luces ─────────────────────────────────────────────────
+    scene.add(new T.AmbientLight(0xffffff, 0.55));
+    const key = new T.DirectionalLight(0xffffff, 1.1);
+    key.position.set(4, 7, 5);
+    scene.add(key);
+    const fill = new T.DirectionalLight(0xC8E5FB, 0.42);
+    fill.position.set(-5, 3, 4);
+    scene.add(fill);
+    const rim = new T.DirectionalLight(0xffffff, 0.35);
+    rim.position.set(-3, 5, -4);
+    scene.add(rim);
+
+    // ── Perfil del frasco (LatheGeometry) ─────────────────────
+    // X = radio desde el eje Y. Y = altura desde la base.
+    // Flacon redondo niche: base ancha, hombros suaves, cuello corto.
+    const profile = [
+      new T.Vector2(0.001, 0.00),
+      new T.Vector2(0.55,  0.00),
+      new T.Vector2(0.92,  0.10),
+      new T.Vector2(1.08,  0.28),
+      new T.Vector2(1.12,  0.55),
+      new T.Vector2(1.12,  2.95),
+      new T.Vector2(1.08,  3.28),
+      new T.Vector2(0.90,  3.55),
+      new T.Vector2(0.58,  3.78),
+      new T.Vector2(0.42,  3.96),
+      new T.Vector2(0.42,  4.32),
+    ];
+    const LATHE_SEG = 96;
+    const NECK_TOP = 4.32;
+    const FULL_LEVEL = 3.80;  // a la altura del hombro alto
+
+    const glassGeo = new T.LatheGeometry(profile, LATHE_SEG);
+    const glassMat = new T.MeshPhongMaterial({
+      color: 0xFFFFFF,
+      transparent: true,
+      opacity: 0.18,
+      shininess: 120,
+      specular: 0xFFFFFF,
+      side: T.DoubleSide,
+      depthWrite: false,
+    });
+    const glass = new T.Mesh(glassGeo, glassMat);
+    scene.add(glass);
+
+    // Línea de contorno tenue para definir la silueta sobre fondo blanco.
+    const edgesGeo = new T.EdgesGeometry(glassGeo, 30);
+    const edgesMat = new T.LineBasicMaterial({
+      color: 0xB8C2CC, transparent: true, opacity: 0.55,
+    });
+    const edges = new T.LineSegments(edgesGeo, edgesMat);
+    scene.add(edges);
+
+    // ── Líquido (lathe ligeramente interior, recortado por plano) ─
+    const liquidProfile = profile.map(v =>
+      new T.Vector2(Math.max(0.001, v.x - 0.08), v.y)
+    );
+    const liquidGeo = new T.LatheGeometry(liquidProfile, LATHE_SEG);
+
+    // Plano de clipping horizontal: keep where -y + constant > 0  =>  y < constant
+    const fillPlane = new T.Plane(new T.Vector3(0, -1, 0), 0);
+
+    const liquidMat = new T.MeshPhongMaterial({
+      color: 0x4FB5E8,
+      shininess: 90,
+      specular: 0xA7DDFC,
+      transparent: true,
+      opacity: 0.90,
+      clippingPlanes: [fillPlane],
+      clipShadows: false,
+      side: T.DoubleSide,
+    });
+    const liquid = new T.Mesh(liquidGeo, liquidMat);
+    scene.add(liquid);
+
+    // Disco superficial: una elipse fina en la cota del líquido para que
+    // se vea el "menisco". Se mueve solidaria con fillPlane.
+    const surfaceGeo = new T.CircleGeometry(1.0, 64);
+    surfaceGeo.rotateX(-Math.PI / 2);
+    const surfaceMat = new T.MeshBasicMaterial({
+      color: 0xE5F4FD,
+      transparent: true,
+      opacity: 0.55,
+      side: T.DoubleSide,
+    });
+    const surface = new T.Mesh(surfaceGeo, surfaceMat);
+    scene.add(surface);
+
+    // Helper: radio interior del frasco a una altura Y dada (interpola el perfil).
+    function radiusAt(y) {
+      for (let i = 0; i < liquidProfile.length - 1; i++) {
+        const a = liquidProfile[i];
+        const b = liquidProfile[i + 1];
+        if (y >= a.y && y <= b.y) {
+          const t = (b.y === a.y) ? 0 : (y - a.y) / (b.y - a.y);
+          return a.x + (b.x - a.x) * t;
+        }
+      }
+      return liquidProfile[liquidProfile.length - 1].x;
+    }
+
+    // ── Cap / atomizador ──────────────────────────────────────
+    const capMat = new T.MeshPhongMaterial({
+      color: 0x0A0F1F,
+      shininess: 60,
+      specular: 0x3A4050,
+    });
+    const capGeo = new T.CylinderGeometry(0.56, 0.56, 0.85, 48);
+    const cap = new T.Mesh(capGeo, capMat);
+    cap.position.y = NECK_TOP + 0.42;  // 4.74
+    scene.add(cap);
+
+    // Botón superior del atomizador
+    const btnGeo = new T.CylinderGeometry(0.32, 0.34, 0.22, 32);
+    const btn = new T.Mesh(btnGeo, capMat);
+    btn.position.y = NECK_TOP + 0.95;  // 5.27
+    scene.add(btn);
+
+    // Nozzle lateral (de donde sale el aroma)
+    const nozzleMat = new T.MeshPhongMaterial({ color: 0x6B7480, shininess: 30 });
+    const nozzleGeo = new T.CylinderGeometry(0.07, 0.07, 0.18, 16);
+    const nozzle = new T.Mesh(nozzleGeo, nozzleMat);
+    nozzle.rotation.z = Math.PI / 2;
+    nozzle.position.set(0.55, NECK_TOP + 0.55, 0);
+    scene.add(nozzle);
+
+    // ── Partículas de aroma ───────────────────────────────────
+    const NUM_PARTICLES = 22;
+    const partGeo = new T.SphereGeometry(0.055, 10, 10);
+    const particles = [];
+    for (let i = 0; i < NUM_PARTICLES; i++) {
+      const m = new T.MeshBasicMaterial({
+        color: 0x4FB5E8,
+        transparent: true,
+        opacity: 0,
+      });
+      const mesh = new T.Mesh(partGeo, m);
+      mesh.visible = false;
+      mesh.userData = {
+        // Cada partícula tiene su instante de emisión escalonado dentro
+        // de la fase "lleno" para que salga una columna continua.
+        emitT: 0.50 + (i / NUM_PARTICLES) * 0.30,
+        xOff: (Math.random() - 0.5) * 0.55,
+        zOff: (Math.random() - 0.5) * 0.55,
+        wobble: Math.random() * Math.PI * 2,
+      };
+      scene.add(mesh);
+      particles.push(mesh);
+    }
+
+    // ── Grupo rotatorio (todo lo asimétrico) ──────────────────
+    // El frasco propiamente es simétrico de revolución, así que rotar la
+    // lathe no produce cambio visible. Rotamos cap + nozzle + partículas
+    // como pivote y la lathe se "anima" por las luces y por la cota del
+    // líquido. Para reforzar el efecto, hacemos orbitar ligeramente la
+    // posición del nozzle (debajo).
+
+    // ── Loop ──────────────────────────────────────────────────
+    const clock = new T.Clock();
+    const LOOP = 10.0;
+    let raf = 0;
+    let alive = true;
+
+    function step() {
+      if (!alive) return;
+      raf = requestAnimationFrame(step);
+      const elapsed = clock.getElapsedTime();
+      const t = reducedMotion ? 0.65 : ((elapsed % LOOP) / LOOP);
+
+      const FILL_START = 0.10;
+      const FILL_END   = 0.50;
+      const HOLD_END   = 0.80;
+      const EVAP_END   = 0.95;
+
+      let level, opacity;
+      if (t < FILL_START) {
+        level = 0;             opacity = 0.90;
+      } else if (t < FILL_END) {
+        const u = (t - FILL_START) / (FILL_END - FILL_START);
+        const eased = u * u * (3 - 2 * u);
+        level   = eased * FULL_LEVEL;
+        opacity = 0.90;
+      } else if (t < HOLD_END) {
+        level = FULL_LEVEL;    opacity = 0.90;
+      } else if (t < EVAP_END) {
+        const u = (t - HOLD_END) / (EVAP_END - HOLD_END);
+        level   = FULL_LEVEL;
+        opacity = 0.90 * (1 - u);
+      } else {
+        level = 0;             opacity = 0;
+      }
+
+      fillPlane.constant = level;
+      liquidMat.opacity  = opacity;
+      liquid.visible     = opacity > 0.01;
+
+      // Superficie del líquido (disco que sigue al menisco)
+      if (level > 0.01 && opacity > 0.01) {
+        const r = radiusAt(level);
+        surface.position.y = level - 0.001;
+        surface.scale.set(r, 1, r);
+        surfaceMat.opacity = 0.55 * (opacity / 0.90);
+        surface.visible = true;
+      } else {
+        surface.visible = false;
+      }
+
+      // Partículas: emisión escalonada durante la fase "lleno"
+      const emitPhase = t >= FILL_END && t < EVAP_END;
+      for (const p of particles) {
+        const ud = p.userData;
+        const age = ((t - ud.emitT + 1) % 1);   // [0, 1)
+        const LIFE = 0.22;
+        if (emitPhase && age < LIFE) {
+          const u = age / LIFE;
+          const ease = 1 - (1 - u) * (1 - u);
+          const wob = Math.sin(elapsed * 2 + ud.wobble) * 0.06;
+          p.position.set(
+            (ud.xOff + wob) * (0.4 + ease * 1.4),
+            NECK_TOP + 0.95 + ease * 2.4,
+            (ud.zOff - wob) * (0.4 + ease * 1.4),
+          );
+          p.material.opacity = (1 - u) * 0.50;
+          p.scale.setScalar(0.35 + ease * 1.6);
+          p.visible = true;
+        } else {
+          p.visible = false;
+        }
+      }
+
+      if (!reducedMotion) {
+        // Rotación lenta del conjunto. La lathe es de revolución, pero el
+        // nozzle y las partículas sí tienen orientación.
+        const ang = elapsed * 0.22;
+        cap.rotation.y    = ang;
+        btn.rotation.y    = ang;
+        nozzle.position.x = Math.cos(ang) * 0.55;
+        nozzle.position.z = Math.sin(ang) * 0.55;
+        nozzle.rotation.y = -ang;
+      }
+
+      renderer.render(scene, camera);
+    }
+    step();
+
+    // ── Resize ────────────────────────────────────────────────
+    const onResize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      if (!w || !h) return;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    const ro = (window.ResizeObserver) ? new ResizeObserver(onResize) : null;
+    if (ro) ro.observe(mount); else window.addEventListener('resize', onResize);
+
+    // ── Cleanup ───────────────────────────────────────────────
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      if (ro) ro.disconnect(); else window.removeEventListener('resize', onResize);
+      try { mount.removeChild(renderer.domElement); } catch (_e) {}
+      glassGeo.dispose();  glassMat.dispose();
+      edgesGeo.dispose();  edgesMat.dispose();
+      liquidGeo.dispose(); liquidMat.dispose();
+      surfaceGeo.dispose(); surfaceMat.dispose();
+      capGeo.dispose();    capMat.dispose();
+      btnGeo.dispose();
+      nozzleGeo.dispose(); nozzleMat.dispose();
+      partGeo.dispose();
+      particles.forEach(p => p.material.dispose());
+      renderer.dispose();
+    };
+  }, []);
+
+  return <div ref={mountRef} className="tn-bottle-3d" aria-hidden="true" />;
+}
+
+/* ============================================================
+   FILTER PANEL
+   ============================================================ */
+function FilterPanel({ filters, setFilters }) {
+  const set = (key, val) =>
+    setFilters((f) => ({ ...f, [key]: f[key] === val ? null : val }));
+
+  const clear = () => setFilters({ familia: null, season: null, gender: null });
+
+  return (
+    <div className="tn-filters">
+      <div className="tn-filter-grid">
+        <FilterGroup label="Familia">
+          {FAMILIA_OPTIONS.map((f) => (
+            <button
+              key={f}
+              className={'tn-fchip' + (filters.familia === f ? ' on' : '')}
+              onClick={() => set('familia', f)}
+            >{FAMILIA_LABELS[f]}</button>
+          ))}
+        </FilterGroup>
+        <FilterGroup label="Estación">
+          {SEASON_OPTIONS.map((s) => (
+            <button
+              key={s}
+              className={'tn-fchip' + (filters.season === s ? ' on' : '')}
+              onClick={() => set('season', s)}
+            >{cap(s)}</button>
+          ))}
+        </FilterGroup>
+        <FilterGroup label="Género">
+          {GENDER_OPTIONS.map((g) => (
+            <button
+              key={g}
+              className={'tn-fchip' + (filters.gender === g ? ' on' : '')}
+              onClick={() => set('gender', g)}
+            >{cap(g)}</button>
+          ))}
+        </FilterGroup>
+      </div>
+      {Object.values(filters).some((v) => v !== null) && (
+        <button className="tn-clear" onClick={clear}>
+          × Limpiar filtros
+        </button>
+      )}
+    </div>
+  );
+}
+
+function FilterGroup({ label, children }) {
+  return (
+    <div>
+      <div className="tn-flabel">{label}</div>
+      <div className="tn-fchips">{children}</div>
+    </div>
+  );
+}
+
+/* ============================================================
+   RESULTS VIEW
+   ============================================================ */
+function ResultsView({ query, filters, results, loading, error, onBack, onRetry, onCardOpen, favorites, toggleFavorite }) {
+  const activeF = [
+    filters?.familia && (FAMILIA_LABELS[filters.familia] || cap(filters.familia)),
+    filters?.season && cap(filters.season),
+    filters?.gender && cap(filters.gender),
+  ].filter(Boolean);
+
+  return (
+    <main className="tn-main">
+      <section className="tn-split" style={{ marginTop: 56 }}>
+        <h2>
+          {loading ? 'Buscando…' : 'Tus coincidencias'}
+          {!loading && results.length > 0 && <span className="count">{results.length}</span>}
+        </h2>
+        <div className="meta">
+          <span>Para <b>"{query}"</b></span>
+          {activeF.length > 0 && (
+            <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+              {activeF.map((f, i) => (
+                <span key={i} style={{
+                  background: 'var(--bg-soft)', padding: '3px 9px', borderRadius: 999,
+                  fontSize: 12, fontWeight: 500, color: 'var(--ink-soft)',
+                }}>{f}</span>
+              ))}
+            </span>
+          )}
+          <button className="tn-sort" onClick={onBack}>
+            <SvgArrowLeft size={14} /> Nueva búsqueda
+          </button>
+        </div>
+      </section>
+
+      {loading && <LoadingGrid />}
+
+      {error && !loading && (
+        <div className="tn-error" style={{ marginTop: 36, maxWidth: 'none' }}>
+          <span><b>El perfumista no ha podido responder:</b> {error}</span>
+          <button onClick={onRetry}>Reintentar →</button>
+        </div>
+      )}
+
+      {!loading && !error && results.length > 0 && (
+        <section className="tn-grid">
+          {results.map((r, i) => {
+            const p = CATALOG.find((x) => x.id === r.id);
+            if (!p) return null;
+            return (
+              <PerfumeCard
+                key={r.id}
+                perfume={p}
+                rank={i + 1}
+                score={r.score}
+                isFavorite={favorites.includes(r.id)}
+                onToggleFavorite={() => toggleFavorite(r.id)}
+                onOpen={() => onCardOpen({ perfume: p, score: r.score, reasoning: r.reasoning })}
+              />
+            );
+          })}
+        </section>
+      )}
+
+      <Footer />
+    </main>
+  );
+}
+
+/* ============================================================
+   PERFUME CARD
+   ============================================================ */
+function PerfumeCard({ perfume, rank, score, isFavorite, onToggleFavorite, onOpen }) {
+  const tint = getTint(perfume.familia);
+  const initial = (perfume.nombre || '').replace(/[^A-Za-z0-9]/g, '').charAt(0).toUpperCase() || 'T';
+  const notesSummary = [
+    (perfume.notas?.salida || [])[0],
+    (perfume.notas?.corazon || [])[0],
+    (perfume.notas?.fondo || [])[0],
+  ].filter(Boolean).join(' · ');
+
+  const isTop = rank === 1 && score != null;
+  const hasRating = typeof perfume.rating === 'number' && perfume.rating > 0;
+
+  return (
+    <article className="tn-card" onClick={onOpen}>
+      <div className="tn-frame" style={{
+        background: `linear-gradient(160deg, ${tint.from} 0%, ${tint.to} 100%)`,
+      }}>
+        {score != null && (
+          <span className={'tn-badge' + (isTop ? ' top' : '')}>
+            <span className="dot" />
+            {score}% {isTop && '· top'}
+          </span>
+        )}
+        <button
+          className={'tn-heart' + (isFavorite ? ' on' : '')}
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }}
+          aria-label={isFavorite ? 'Quitar de guardados' : 'Guardar'}
+          aria-pressed={isFavorite}
+        >
+          <Heart size={16} fill={isFavorite ? 'currentColor' : 'none'} strokeWidth={1.4} />
+        </button>
+        <span className="tn-corner">{FAMILIA_LABELS[perfume.familia] || perfume.familia}</span>
+
+        <PerfumeImage perfume={perfume} tint={tint} initial={initial} large={false} />
+      </div>
+
+      <div className="tn-name">
+        <div className="tn-who">
+          {perfume.nombre}
+          <small>{perfume.casa}{perfume.año ? ` · ${perfume.año}` : ''}</small>
+        </div>
+        {hasRating && (
+          <div className="tn-px" title={`${fmtInt(perfume.rating_count)} votos`}>
+            ★&nbsp;{perfume.rating.toFixed(1)}
+          </div>
+        )}
+      </div>
+      <p className="tn-notes">{notesSummary || autoDesc(perfume)}</p>
+    </article>
+  );
+}
+
+/* ============================================================
+   PERFUME IMAGE — usa imagen oficial si está, fallback a SVG.
+   ============================================================ */
+function PerfumeImage({ perfume, tint, initial, large = false }) {
+  const [failed, setFailed] = useState(false);
+  const src = perfume && perfume.imagen;
+  if (src && !failed) {
+    return (
+      <img
+        className={large ? 'tn-img tn-img-lg' : 'tn-img'}
+        src={src}
+        alt={perfume.nombre}
+        loading="lazy"
+        // Parfumo a veces filtra por Referer; con no-referrer pasa siempre.
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return <Bottle accent={tint.accent} body={tint.soft} initial={initial} large={large} />;
+}
+
+/* ============================================================
+   BOTELLA SVG — fallback cuando no hay imagen oficial
+   ============================================================ */
+function Bottle({ accent, body, initial, large = false }) {
+  return (
+    <svg
+      className={large ? 'tn-bottle-lg' : 'tn-bottle'}
+      viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      {/* tapón */}
+      <rect x="46" y="6" width="28" height="16" rx="3" fill={accent} opacity="0.85" />
+      <rect x="46" y="6" width="28" height="4" rx="2" fill={accent} />
+      {/* cuello */}
+      <rect x="52" y="22" width="16" height="10" fill={accent} opacity="0.75" />
+      {/* hombros */}
+      <path d="M 30 36 Q 30 32 38 32 L 82 32 Q 90 32 90 36 L 90 50 L 30 50 Z" fill={accent} opacity="0.20" />
+      {/* cuerpo */}
+      <rect x="22" y="46" width="76" height="108" rx="8" fill={body} stroke={accent} strokeWidth="1.3" />
+      {/* etiqueta */}
+      <rect x="32" y="78" width="56" height="44" rx="2" fill="rgba(255,255,255,0.55)" stroke={accent} strokeWidth="0.8" strokeOpacity="0.5" />
+      {/* inicial */}
+      <text
+        x="60" y="110"
+        textAnchor="middle"
+        fontFamily="Geist, serif"
+        fontSize="32" fontWeight="600"
+        fill={accent}
+        letterSpacing="-0.04em"
+      >{initial}</text>
+      {/* brillo lateral */}
+      <rect x="26" y="50" width="6" height="100" rx="3" fill="rgba(255,255,255,0.45)" />
+    </svg>
+  );
+}
+
+/* ============================================================
+   LOADING GRID
+   ============================================================ */
+function LoadingGrid() {
+  return (
+    <section className="tn-grid">
+      {[0,1,2,3].map((i) => (
+        <div key={i} className="tn-card" style={{ cursor: 'default' }}>
+          <div className="tn-skel tn-skel-frame" />
+          <div className="tn-skel tn-skel-line" style={{ width: '70%' }} />
+          <div className="tn-skel tn-skel-line sm" />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/* ============================================================
+   ARCHIVE VIEW
+   ============================================================ */
+function ArchiveView({ favorites, history, toggleFavorite, onCardOpen, onRunHistory, onGoSearch }) {
+  const saved = useMemo(
+    () => favorites.map((id) => CATALOG.find((p) => p.id === id)).filter(Boolean),
+    [favorites]
+  );
+
+  return (
+    <main className="tn-main">
+      <section className="tn-hero" style={{ padding: '64px 0 0' }}>
+        <span className="tn-pill">
+          <span className="dot" />
+          Tu colección
+        </span>
+        <h1 className="tn-title">
+          Tu <em>archivo.</em>
+        </h1>
+      </section>
+
+      <section className="tn-split">
+        <h2>
+          Guardados
+          <span className="count">{saved.length}</span>
+        </h2>
+        <div className="meta">
+          <span>Tu lista personal · {fmtInt(CATALOG.length)} fragancias en catálogo</span>
+        </div>
+      </section>
+
+      {saved.length === 0 ? (
+        <div className="tn-empty">
+          <p>Aún no has guardado ningún perfume.</p>
+          <button onClick={onGoSearch}>
+            Hacer una búsqueda <SvgArrowRightThick size={14} />
+          </button>
+        </div>
+      ) : (
+        <section className="tn-grid">
+          {saved.map((p) => (
+            <PerfumeCard
+              key={p.id}
+              perfume={p}
+              rank={0}
+              score={null}
+              isFavorite={true}
+              onToggleFavorite={() => toggleFavorite(p.id)}
+              onOpen={() => onCardOpen({ perfume: p, score: null, reasoning: null })}
+            />
+          ))}
+        </section>
+      )}
+
+      <section className="tn-split">
+        <h2>
+          Historial
+          <span className="count">{history.length}</span>
+        </h2>
+        <div className="meta">
+          <span>Últimas 10 consultas · pulsa para repetir</span>
+        </div>
+      </section>
+
+      {history.length === 0 ? (
+        <div className="tn-empty">
+          <p>Aún no has realizado ninguna búsqueda.</p>
+          <button onClick={onGoSearch}>
+            Hacer una búsqueda <SvgArrowRightThick size={14} />
+          </button>
+        </div>
+      ) : (
+        <ul className="tn-hist">
+          {history.slice(0, 10).map((h, i) => (
+            <li key={i}>
+              <button onClick={() => onRunHistory(h)}>
+                <Clock size={15} className="hi" />
+                <span className="hq">{h.query}</span>
+                <span className="hd">{formatDate(h.timestamp)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Footer />
+    </main>
+  );
+}
+
+/* ============================================================
+   CATALOG VIEW — recorre las 31k+ fragancias con filtros y paginación.
+
+   Estado interno (cat):
+     · familia, gender, season, minRating — filtros (single-select)
+     · search       — substring sobre nombre o casa
+     · sort         — 'popularity' | 'rating' | 'recent'
+     · page         — índice 0-based
+
+   Cualquier cambio de filtro/sort resetea page a 0. El pipeline:
+   filtra -> ordena -> pagina (36 por página).
+   ============================================================ */
+const CATALOG_PAGE_SIZE = 36;
+const CATALOG_RATING_OPTIONS = [7, 7.5, 8, 8.5, 9];
+
+function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
+  const [cat, setCat] = useState({
+    familia: null,
+    gender: null,
+    season: null,
+    minRating: 0,
+    search: '',
+    sort: 'popularity',
+    page: 0,
+  });
+
+  // Cambios de filtro/sort resetean page a 0; cambios explícitos de page no.
+  const updateCat = (patch) =>
+    setCat((prev) => ({ ...prev, ...patch, page: ('page' in patch) ? patch.page : 0 }));
+
+  const filtered = useMemo(() => {
+    let pool = CATALOG;
+    if (cat.familia)        pool = pool.filter((p) => p.familia === cat.familia);
+    if (cat.gender)         pool = pool.filter((p) => p.genero === cat.gender || p.genero === 'unisex');
+    if (cat.season)         pool = pool.filter((p) => (p.temporada || []).includes(cat.season));
+    if (cat.minRating > 0)  pool = pool.filter((p) => (p.rating || 0) >= cat.minRating);
+    if (cat.search.trim()) {
+      const q = cat.search.toLowerCase().trim();
+      pool = pool.filter((p) =>
+        (p.nombre || '').toLowerCase().includes(q) ||
+        (p.casa   || '').toLowerCase().includes(q)
+      );
+    }
+    const sorted = pool.slice();
+    if (cat.sort === 'rating') {
+      sorted.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    } else if (cat.sort === 'recent') {
+      sorted.sort((a, b) => (b.año || 0) - (a.año || 0));
+    } else {
+      // popularity: rating × log(1 + votos) — el mismo prior que usa el prefiltro LLM
+      sorted.sort((a, b) => {
+        const sa = (a.rating || 0) * Math.log1p(a.rating_count || 0);
+        const sb = (b.rating || 0) * Math.log1p(b.rating_count || 0);
+        return sb - sa;
+      });
+    }
+    return sorted;
+  }, [cat.familia, cat.gender, cat.season, cat.minRating, cat.search, cat.sort]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / CATALOG_PAGE_SIZE));
+  const page = Math.min(cat.page, totalPages - 1);
+  const pageItems = filtered.slice(page * CATALOG_PAGE_SIZE, (page + 1) * CATALOG_PAGE_SIZE);
+
+  const goToPage = (p) => {
+    setCat((prev) => ({ ...prev, page: p }));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const clearFilters = () =>
+    updateCat({ familia: null, gender: null, season: null, minRating: 0, search: '' });
+
+  const hasFilters = cat.familia || cat.gender || cat.season ||
+                     cat.minRating > 0 || cat.search.trim();
+
+  const SORT_OPTIONS = [
+    { k: 'popularity', l: 'Popularidad' },
+    { k: 'rating',     l: 'Valoración' },
+    { k: 'recent',     l: 'Año' },
+  ];
+
+  return (
+    <main className="tn-main">
+      <section className="tn-hero" style={{ padding: '64px 0 0' }}>
+        <span className="tn-pill"><span className="dot" /> Catálogo</span>
+        <h1 className="tn-title tn-title-compact">
+          Explora el <em>archivo.</em>
+        </h1>
+        <p className="tn-sub">
+          {fmtInt(CATALOG.length)} fragancias indexadas. Filtra por familia, género o estación;
+          busca por nombre o casa.
+        </p>
+      </section>
+
+      <section className="tn-cat-bar">
+        <div className="tn-cat-search-wrap">
+          <SvgSearch />
+          <input
+            className="tn-cat-search"
+            type="text"
+            value={cat.search}
+            onChange={(e) => updateCat({ search: e.target.value })}
+            placeholder="Buscar por nombre o casa…"
+            aria-label="Buscar en el catálogo"
+          />
+          {cat.search && (
+            <button
+              className="tn-cat-search-clear"
+              onClick={() => updateCat({ search: '' })}
+              aria-label="Limpiar búsqueda"
+              type="button"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+
+        <div className="tn-cat-sort">
+          <span className="tn-cat-sort-label">Ordenar</span>
+          {SORT_OPTIONS.map((o) => (
+            <button
+              key={o.k}
+              className={'tn-cat-sort-btn' + (cat.sort === o.k ? ' on' : '')}
+              onClick={() => updateCat({ sort: o.k })}
+              type="button"
+            >{o.l}</button>
+          ))}
+        </div>
+      </section>
+
+      <section className="tn-cat-filters">
+        <CatFilterRow label="Familia">
+          {FAMILIA_OPTIONS.map((f) => (
+            <button
+              key={f}
+              className={'tn-fchip' + (cat.familia === f ? ' on' : '')}
+              onClick={() => updateCat({ familia: cat.familia === f ? null : f })}
+              type="button"
+            >{FAMILIA_LABELS[f]}</button>
+          ))}
+        </CatFilterRow>
+        <CatFilterRow label="Género">
+          {GENDER_OPTIONS.map((g) => (
+            <button
+              key={g}
+              className={'tn-fchip' + (cat.gender === g ? ' on' : '')}
+              onClick={() => updateCat({ gender: cat.gender === g ? null : g })}
+              type="button"
+            >{cap(g)}</button>
+          ))}
+        </CatFilterRow>
+        <CatFilterRow label="Estación">
+          {SEASON_OPTIONS.map((s) => (
+            <button
+              key={s}
+              className={'tn-fchip' + (cat.season === s ? ' on' : '')}
+              onClick={() => updateCat({ season: cat.season === s ? null : s })}
+              type="button"
+            >{cap(s)}</button>
+          ))}
+        </CatFilterRow>
+        <CatFilterRow label="Rating mínimo">
+          {CATALOG_RATING_OPTIONS.map((r) => (
+            <button
+              key={r}
+              className={'tn-fchip' + (cat.minRating === r ? ' on' : '')}
+              onClick={() => updateCat({ minRating: cat.minRating === r ? 0 : r })}
+              type="button"
+            >★ {r}+</button>
+          ))}
+        </CatFilterRow>
+      </section>
+
+      <section className="tn-cat-meta">
+        <div className="tn-cat-meta-l">
+          <span><b>{fmtInt(filtered.length)}</b> resultados</span>
+          {filtered.length > 0 && (
+            <span style={{ color: 'var(--ink-mute)' }}>
+              · Página <b style={{ color: 'var(--ink)' }}>{page + 1}</b> de {totalPages}
+            </span>
+          )}
+        </div>
+        {hasFilters && (
+          <button className="tn-clear" onClick={clearFilters}>× Limpiar filtros</button>
+        )}
+      </section>
+
+      {filtered.length === 0 ? (
+        <div className="tn-empty">
+          <p>No hay perfumes que coincidan con los filtros aplicados.</p>
+          <button onClick={clearFilters}>Limpiar filtros</button>
+        </div>
+      ) : (
+        <>
+          <section className="tn-grid">
+            {pageItems.map((p) => (
+              <PerfumeCard
+                key={p.id}
+                perfume={p}
+                rank={0}
+                score={null}
+                isFavorite={favorites.includes(p.id)}
+                onToggleFavorite={() => toggleFavorite(p.id)}
+                onOpen={() => onCardOpen({ perfume: p, score: null, reasoning: null })}
+              />
+            ))}
+          </section>
+
+          {totalPages > 1 && (
+            <Pagination page={page} total={totalPages} onChange={goToPage} />
+          )}
+        </>
+      )}
+
+      <Footer />
+    </main>
+  );
+}
+
+function CatFilterRow({ label, children }) {
+  return (
+    <div className="tn-cat-filter-row">
+      <div className="tn-cat-filter-label">{label}</div>
+      <div className="tn-cat-filter-chips">{children}</div>
+    </div>
+  );
+}
+
+/* Paginación numérica con elipsis: 1 … 4 5 6 … 20 */
+function Pagination({ page, total, onChange }) {
+  const items = getPageRange(page + 1, total);
+  return (
+    <nav className="tn-pagination" aria-label="Paginación">
+      <button
+        className="tn-pag-btn tn-pag-arrow"
+        onClick={() => onChange(Math.max(0, page - 1))}
+        disabled={page === 0}
+        aria-label="Página anterior"
+        type="button"
+      >
+        <SvgArrowLeft size={14} />
+      </button>
+      {items.map((it, i) => (
+        it === '...' ? (
+          <span key={i} className="tn-pag-ellipsis">…</span>
+        ) : (
+          <button
+            key={i}
+            className={'tn-pag-btn' + (it === page + 1 ? ' on' : '')}
+            onClick={() => onChange(it - 1)}
+            aria-current={it === page + 1 ? 'page' : undefined}
+            type="button"
+          >{it}</button>
+        )
+      ))}
+      <button
+        className="tn-pag-btn tn-pag-arrow"
+        onClick={() => onChange(Math.min(total - 1, page + 1))}
+        disabled={page >= total - 1}
+        aria-label="Página siguiente"
+        type="button"
+      >
+        <SvgArrowRightThick size={14} />
+      </button>
+    </nav>
+  );
+}
+
+function getPageRange(current, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const set = new Set([1, total, current, current - 1, current + 1]);
+  const pages = [...set].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i < pages.length; i++) {
+    if (i > 0 && pages[i] - pages[i - 1] > 1) out.push('...');
+    out.push(pages[i]);
+  }
+  return out;
+}
+
+/* ============================================================
+   DETAIL MODAL
+   ============================================================ */
+function DetailModal({ perfume, score, reasoning, isFavorite, onToggleFavorite, onSimilar, onClose }) {
+  const tint = getTint(perfume.familia);
+  const initial = perfume.nombre.replace(/[^A-Za-z0-9]/g, '').charAt(0).toUpperCase() || 'T';
+
+  return (
+    <div className="tn-modal-bg" onClick={onClose}>
+      <div className="tn-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <button className="tn-modal-close" onClick={onClose} aria-label="Cerrar">
+          <X size={18} />
+        </button>
+        <div className="tn-modal-grid">
+          <div className="tn-modal-frame" style={{
+            background: `linear-gradient(160deg, ${tint.from} 0%, ${tint.to} 100%)`,
+          }}>
+            <PerfumeImage perfume={perfume} tint={tint} initial={initial} large />
+            {score != null && (
+              <div style={{ marginTop: 24, position: 'relative', zIndex: 2 }}>
+                <span className="tn-badge top" style={{ position: 'static', boxShadow: '0 4px 12px rgba(10,15,31,0.08)' }}>
+                  <span className="dot" /> {score}% match
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="tn-modal-info">
+            <div>
+              <span style={{
+                display: 'inline-block',
+                fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
+                color: tint.accent,
+                marginBottom: 8,
+              }}>
+                {FAMILIA_LABELS[perfume.familia] || perfume.familia}
+                {perfume.concentracion ? ` · ${perfume.concentracion}` : ''}
+                {' · '}{cap(perfume.genero)}
+              </span>
+              <h2>{perfume.nombre}</h2>
+              <div className="tn-modal-house">
+                {perfume.casa}{perfume.año ? ` · ${perfume.año}` : ''}
+                {perfume.perfumistas && perfume.perfumistas.length > 0
+                  ? ` · ${perfume.perfumistas.slice(0, 2).join(', ')}`
+                  : ''}
+              </div>
+            </div>
+
+            <p className="tn-modal-desc">{autoDesc(perfume)}</p>
+
+            <div className="tn-modal-meta">
+              <div>
+                <span className="label">Valoración</span>
+                <span className="value">
+                  {typeof perfume.rating === 'number' && perfume.rating > 0
+                    ? `★ ${perfume.rating.toFixed(1)} / 10`
+                    : '—'}
+                </span>
+              </div>
+              <div>
+                <span className="label">Votos</span>
+                <span className="value">{fmtInt(perfume.rating_count)}</span>
+              </div>
+              <div>
+                <span className="label">Estación</span>
+                <span className="value">
+                  {(perfume.temporada && perfume.temporada.length)
+                    ? perfume.temporada.map(cap).join(', ')
+                    : '—'}
+                </span>
+              </div>
+              <div>
+                <span className="label">Acordes</span>
+                <span className="value" style={{ fontSize: 13.5 }}>
+                  {(perfume.acordes && perfume.acordes.length)
+                    ? perfume.acordes.slice(0, 3).map(cap).join(' · ')
+                    : '—'}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <div className="tn-flabel" style={{ marginBottom: 12 }}>Pirámide olfativa</div>
+              <div className="tn-pyr-grid">
+                <PyrCol label="Salida" notes={perfume.notas?.salida || []} />
+                <PyrCol label="Corazón" notes={perfume.notas?.corazon || []} />
+                <PyrCol label="Fondo" notes={perfume.notas?.fondo || []} />
+              </div>
+            </div>
+
+            {reasoning && (
+              <div className="tn-reason">
+                <div className="label">
+                  <span style={{
+                    display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+                    background: 'var(--blue-press)'
+                  }} />
+                  Por qué encaja
+                </div>
+                <p>{reasoning}</p>
+              </div>
+            )}
+
+            <div className="tn-modal-actions">
+              <button
+                className={'tn-btn tn-btn-ghost' + (isFavorite ? ' on' : '')}
+                onClick={onToggleFavorite}
+              >
+                <Heart size={15} fill={isFavorite ? 'currentColor' : 'none'} strokeWidth={1.6} />
+                {isFavorite ? 'Guardado' : 'Guardar'}
+              </button>
+              <button className="tn-btn tn-btn-primary" onClick={onSimilar}>
+                Ver similares <SvgArrowRightThick size={14} />
+              </button>
+              {perfume.url && (
+                <a
+                  className="tn-btn tn-btn-ghost"
+                  href={perfume.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ textDecoration: 'none' }}
+                >
+                  Ver en Parfumo ↗
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PyrCol({ label, notes }) {
+  return (
+    <div className="tn-pyr-col">
+      <div className="tn-pyr-h">{label}</div>
+      <ul style={{ padding: 0, margin: 0 }}>
+        {notes.map((n, i) => (
+          <li key={i}>{n}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+function Footer() {
+  return (
+    <footer className="tn-footer">
+      <div>
+        <span style={{ fontWeight: 600, color: 'var(--ink)' }}>topnote</span>
+        <span className="dot" />
+        consultoría olfativa asistida
+      </div>
+      <div>
+        {fmtInt(CATALOG.length)} fragancias · datos vía Parfumo
+      </div>
+    </footer>
+  );
+}
+
+/* ============================================================
+   HELPERS — fecha + iconos secundarios
+   ============================================================ */
+function formatDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const date = d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+  const time = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  return `${date} · ${time}`;
+}
+
+/* ============================================================
+   ICONOS LOCALES (los principales están en el wrapper HTML)
+   ============================================================ */
+const SvgFilter = ({ size = 18, stroke = 2 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 6h18M6 12h12M10 18h4" />
+  </svg>
+);
+
+const SvgArrowRightThick = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 12h14M13 5l7 7-7 7" />
+  </svg>
+);
+
+const SvgArrowLeft = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M19 12H5M12 19l-7-7 7-7" />
+  </svg>
+);
+
+const SvgSearch = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  </svg>
+);
+
+/* === BOOTSTRAP === */
+const __root = ReactDOM.createRoot(document.getElementById('root'));
+__root.render(<TopNote />);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Top Note</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="image-slot.js"></script>
+<style>
+  :root{
+    --bg:        #FFFFFF;
+    --bg-soft:   #F5F6F8;
+    --bg-card:   #FAFAFC;
+    --ink:       #0A0F1F;
+    --ink-mute:  #6B7480;
+    --ink-soft:  #2A2F3F;
+    --line:      #EEEFF2;
+    --blue:      #4FB5E8;
+    --blue-press:#2E9BD9;
+    --blue-soft: #E5F4FD;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size:15px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    font-feature-settings:"ss01","cv11";
+  }
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  a{color:inherit;text-decoration:none}
+
+  /* ─── Header ──────────────────────────────────────── */
+  header{
+    position:sticky;top:0;z-index:10;
+    background:rgba(255,255,255,.85);backdrop-filter:saturate(1.4) blur(12px);
+    border-bottom:1px solid var(--line);
+  }
+  .head{
+    max-width:1400px;margin:0 auto;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:18px 40px;
+  }
+  .brand{
+    display:flex;align-items:center;gap:9px;
+    font-weight:600;font-size:17px;letter-spacing:-.02em;
+  }
+  .brand .dot{
+    width:10px;height:10px;border-radius:50%;
+    background:var(--blue);
+    box-shadow:0 0 0 4px rgba(79,181,232,.18);
+  }
+  nav.nav{
+    display:flex;gap:2px;
+    font-size:14px;font-weight:500;
+  }
+  nav.nav a{
+    padding:8px 14px;border-radius:8px;color:var(--ink-mute);
+    transition:color .15s ease, background .15s ease;
+  }
+  nav.nav a:hover{color:var(--ink)}
+  nav.nav a.on{color:var(--ink);background:var(--bg-soft)}
+  .head-r{display:flex;align-items:center;gap:10px}
+  .iconbtn{
+    width:38px;height:38px;border-radius:10px;
+    display:inline-flex;align-items:center;justify-content:center;
+    color:var(--ink-mute);transition:background .15s ease, color .15s ease;
+  }
+  .iconbtn:hover{background:var(--bg-soft);color:var(--ink)}
+  .iconbtn svg{width:18px;height:18px}
+  .av{
+    width:34px;height:34px;border-radius:50%;
+    background:linear-gradient(135deg, var(--blue), #A7DDFC);
+    color:#fff;font-weight:600;font-size:12px;letter-spacing:.02em;
+    display:flex;align-items:center;justify-content:center;
+  }
+
+  /* ─── Page ────────────────────────────────────────── */
+  main{
+    max-width:1400px;margin:0 auto;
+    padding:0 40px;
+  }
+
+  /* ─── Hero ────────────────────────────────────────── */
+  .hero{
+    padding:96px 0 64px;
+    display:grid;
+    grid-template-columns:1fr;
+    gap:0;
+    position:relative;
+  }
+  .pill{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:6px 12px 6px 8px;border-radius:999px;
+    background:var(--bg-soft);
+    font-size:12.5px;color:var(--ink-mute);font-weight:500;
+    align-self:flex-start;
+    width:fit-content;
+  }
+  .pill .dot{
+    width:8px;height:8px;border-radius:50%;background:var(--blue);
+    box-shadow:0 0 0 0 rgba(79,181,232,.5);
+    animation:ping 1.8s infinite;
+  }
+  @keyframes ping{
+    0%{box-shadow:0 0 0 0 rgba(79,181,232,.5)}
+    70%{box-shadow:0 0 0 9px rgba(79,181,232,0)}
+    100%{box-shadow:0 0 0 0 rgba(79,181,232,0)}
+  }
+
+  h1.title{
+    font-size:clamp(72px, 9vw, 128px);
+    line-height:.92;
+    letter-spacing:-.045em;
+    font-weight:600;
+    margin-top:28px;
+    max-width:14ch;
+    text-wrap:balance;
+  }
+  h1.title em{
+    font-style:normal;
+    color:var(--blue);
+  }
+
+  .composer{
+    margin-top:48px;
+    max-width:760px;
+    display:grid;grid-template-columns:1fr auto;
+    gap:14px;align-items:center;
+    border-bottom:1.5px solid var(--ink);
+    padding-bottom:14px;
+    transition:border-color .2s ease;
+  }
+  .composer:focus-within{border-color:var(--blue)}
+  .composer input{
+    width:100%;border:0;outline:0;background:transparent;
+    font:inherit;font-size:22px;font-weight:400;
+    color:var(--ink);
+    padding:14px 0;
+    letter-spacing:-.01em;
+  }
+  .composer input::placeholder{color:var(--ink-mute)}
+  .go{
+    width:54px;height:54px;border-radius:50%;
+    background:var(--blue);color:#fff;
+    display:inline-flex;align-items:center;justify-content:center;
+    transition:transform .15s ease, background .15s ease;
+    box-shadow:0 6px 20px rgba(79,181,232,.45);
+  }
+  .go:hover{background:var(--blue-press);transform:translateX(3px)}
+  .go svg{width:20px;height:20px}
+
+  .tags{
+    margin-top:24px;
+    display:flex;flex-wrap:wrap;gap:8px;
+    max-width:760px;
+  }
+  .tag{
+    font-size:13.5px;color:var(--ink-mute);font-weight:500;
+    padding:8px 14px;border-radius:999px;
+    background:var(--bg-soft);
+    transition:background .15s ease, color .15s ease;
+  }
+  .tag:hover{background:var(--blue-soft);color:var(--blue)}
+  .tag.act{background:var(--ink);color:#fff}
+
+  /* ─── Section split ───────────────────────────────── */
+  .split{
+    margin-top:96px;
+    padding-top:48px;
+    border-top:1px solid var(--line);
+    display:flex;justify-content:space-between;align-items:baseline;
+  }
+  .split h2{
+    font-size:42px;font-weight:600;letter-spacing:-.025em;
+    line-height:1.05;
+  }
+  .split h2 .count{
+    color:var(--ink-mute);font-weight:500;margin-left:14px;font-size:18px;
+    vertical-align:8px;
+  }
+  .split .meta{
+    font-size:14px;color:var(--ink-mute);
+    display:flex;align-items:center;gap:18px;
+  }
+  .split .meta b{color:var(--ink);font-weight:500}
+  .sort{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:9px 14px;border-radius:10px;
+    background:var(--bg-soft);font-size:13.5px;font-weight:500;
+    color:var(--ink);
+  }
+  .sort svg{width:14px;height:14px;color:var(--ink-mute)}
+
+  /* ─── Match grid ──────────────────────────────────── */
+  .grid{
+    margin-top:36px;padding-bottom:96px;
+    display:grid;grid-template-columns:repeat(4, 1fr);gap:24px;
+  }
+  .card{
+    cursor:pointer;
+    display:flex;flex-direction:column;gap:14px;
+    position:relative;
+    transition:transform .25s cubic-bezier(.2,.7,.3,1);
+  }
+  .card:hover{transform:translateY(-4px)}
+  .frame{
+    position:relative;
+    aspect-ratio: 4 / 5;
+    border-radius:18px;
+    overflow:hidden;
+    background:var(--bg-card);
+    box-shadow:0 0 0 1px var(--line);
+  }
+  .frame image-slot{
+    display:block;width:100%;height:100%;
+  }
+  .frame::before{
+    content:"";position:absolute;inset:0;
+    background:radial-gradient(ellipse at 50% 100%, rgba(79,181,232,.08), transparent 65%);
+    pointer-events:none;z-index:1;
+  }
+  .badge{
+    position:absolute;left:14px;top:14px;z-index:2;
+    background:rgba(255,255,255,.92);backdrop-filter:blur(10px);
+    border-radius:999px;padding:6px 11px 6px 8px;
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12.5px;font-weight:600;letter-spacing:-.005em;
+    color:var(--ink);
+    box-shadow:0 2px 8px rgba(10,15,31,.06);
+  }
+  .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--blue)}
+  .badge.top .dot{background:var(--blue);box-shadow:0 0 0 3px rgba(79,181,232,.28)}
+  .heart{
+    position:absolute;right:14px;top:14px;z-index:2;
+    width:34px;height:34px;border-radius:50%;
+    background:rgba(255,255,255,.92);backdrop-filter:blur(10px);
+    display:inline-flex;align-items:center;justify-content:center;
+    color:var(--ink-mute);
+    box-shadow:0 2px 8px rgba(10,15,31,.06);
+    transition:color .15s ease, background .15s ease;
+  }
+  .heart:hover{color:var(--blue)}
+  .heart.on{color:#fff;background:var(--blue)}
+  .heart svg{width:16px;height:16px;fill:currentColor;stroke:currentColor;stroke-width:1.4}
+  .heart:not(.on) svg{fill:none}
+
+  .name{
+    display:flex;align-items:baseline;justify-content:space-between;
+    gap:12px;
+  }
+  .name .who{
+    font-size:19px;font-weight:600;letter-spacing:-.015em;
+    line-height:1.15;
+  }
+  .name .who small{
+    display:block;font-size:13px;font-weight:500;color:var(--ink-mute);
+    margin-top:2px;letter-spacing:0;
+  }
+  .name .px{
+    font-size:18px;font-weight:600;letter-spacing:-.015em;
+    color:var(--ink);
+    white-space:nowrap;
+  }
+  .notes{
+    font-size:13.5px;color:var(--ink-mute);line-height:1.5;
+    margin-top:-4px;
+  }
+
+  /* ─── Empty image-slot styling ─── */
+  image-slot{
+    --slot-bg: var(--bg-card);
+    --slot-border: 1px dashed rgba(79,181,232,.35);
+    --slot-color: rgba(46,155,217,.7);
+  }
+
+  /* responsive */
+  @media (max-width: 980px){
+    .head{padding:14px 24px}
+    main{padding:0 24px}
+    .grid{grid-template-columns:repeat(2, 1fr);gap:18px}
+    .split{flex-direction:column;align-items:flex-start;gap:14px}
+    .hero{padding:48px 0 32px}
+    .composer input{font-size:18px}
+  }
+  @media (max-width: 560px){
+    .grid{grid-template-columns:1fr}
+    h1.title{font-size:56px}
+    nav.nav{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="head">
+    <div class="brand">
+      <span class="dot"></span>
+      topnote
+    </div>
+    <nav class="nav">
+      <a href="#" class="on">Search</a>
+      <a href="#">Matches</a>
+      <a href="#">Saved</a>
+    </nav>
+    <div class="head-r">
+      <button class="iconbtn" title="Filters">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+      </button>
+      <button class="iconbtn" title="History">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+      </button>
+      <div class="av">M</div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <span class="pill">
+      <span class="dot"></span>
+      AI · Online
+    </span>
+
+    <h1 class="title">Find your <em>scent.</em></h1>
+
+    <form class="composer" onsubmit="event.preventDefault()">
+      <input type="text" placeholder="Describe it. Sweet for winter, like Sauvage but cheaper…" />
+      <button class="go" type="submit" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </button>
+    </form>
+
+    <div class="tags">
+      <button class="tag act">Sweet for winter</button>
+      <button class="tag">Like Sauvage</button>
+      <button class="tag">Office, under 50€</button>
+      <button class="tag">Long-lasting summer</button>
+      <button class="tag">Niche &amp; weird</button>
+    </div>
+  </section>
+
+  <section class="split">
+    <h2>Your matches <span class="count">4</span></h2>
+    <div class="meta">
+      <span>For <b>"sweet for winter, like BR540 but cheaper"</b></span>
+      <button class="sort">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h13M3 12h9M3 18h5M17 4v16m0 0-3-3m3 3 3-3"/></svg>
+        Best match
+      </button>
+    </div>
+  </section>
+
+  <section class="grid">
+
+    <article class="card">
+      <div class="frame">
+        <span class="badge top"><span class="dot"></span>92% · top match</span>
+        <button class="heart on" aria-label="Save">
+          <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.35-9.5-9C.83 9 2.5 5 6 5c2 0 3.5 1 6 4 2.5-3 4-4 6-4 3.5 0 5.17 4 3.5 7-2.5 4.65-9.5 9-9.5 9z"/></svg>
+        </button>
+        <image-slot id="bottle-yara" shape="rect" placeholder="Yara · Lattafa"></image-slot>
+      </div>
+      <div class="name">
+        <div class="who">Yara<small>Lattafa</small></div>
+        <div class="px">28&nbsp;€</div>
+      </div>
+      <p class="notes">Caramelo · gardenia tahitiana · vainilla almizclada</p>
+    </article>
+
+    <article class="card">
+      <div class="frame">
+        <span class="badge"><span class="dot"></span>88%</span>
+        <button class="heart" aria-label="Save">
+          <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.35-9.5-9C.83 9 2.5 5 6 5c2 0 3.5 1 6 4 2.5-3 4-4 6-4 3.5 0 5.17 4 3.5 7-2.5 4.65-9.5 9-9.5 9z"/></svg>
+        </button>
+        <image-slot id="bottle-shahrazad" shape="rect" placeholder="Shahrazad · Alhambra"></image-slot>
+      </div>
+      <div class="name">
+        <div class="who">Shahrazad<small>Maison Alhambra</small></div>
+        <div class="px">38&nbsp;€</div>
+      </div>
+      <p class="notes">Azafrán · amberwood · cedro</p>
+    </article>
+
+    <article class="card">
+      <div class="frame">
+        <span class="badge"><span class="dot"></span>84%</span>
+        <button class="heart" aria-label="Save">
+          <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.35-9.5-9C.83 9 2.5 5 6 5c2 0 3.5 1 6 4 2.5-3 4-4 6-4 3.5 0 5.17 4 3.5 7-2.5 4.65-9.5 9-9.5 9z"/></svg>
+        </button>
+        <image-slot id="bottle-khamrah" shape="rect" placeholder="Khamrah · Lattafa"></image-slot>
+      </div>
+      <div class="name">
+        <div class="who">Khamrah<small>Lattafa</small></div>
+        <div class="px">32&nbsp;€</div>
+      </div>
+      <p class="notes">Dátil · canela · praliné · haba tonka</p>
+    </article>
+
+    <article class="card">
+      <div class="frame">
+        <span class="badge"><span class="dot"></span>78%</span>
+        <button class="heart" aria-label="Save">
+          <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.35-9.5-9C.83 9 2.5 5 6 5c2 0 3.5 1 6 4 2.5-3 4-4 6-4 3.5 0 5.17 4 3.5 7-2.5 4.65-9.5 9-9.5 9z"/></svg>
+        </button>
+        <image-slot id="bottle-fakhar" shape="rect" placeholder="Fakhar · Lattafa"></image-slot>
+      </div>
+      <div class="name">
+        <div class="who">Fakhar<small>Lattafa</small></div>
+        <div class="px">35&nbsp;€</div>
+      </div>
+      <p class="notes">Pera · rosa · pachulí · vainilla</p>
+    </article>
+
+  </section>
+
+</main>
+
+<script>
+  // Toggle hearts on click
+  document.querySelectorAll('.heart').forEach(h => {
+    h.addEventListener('click', e => {
+      e.stopPropagation();
+      h.classList.toggle('on');
+    });
+  });
+  // Toggle tags
+  document.querySelectorAll('.tag').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tag').forEach(x => x.classList.remove('act'));
+      t.classList.add('act');
+    });
+  });
+</script>
+
+</body>
+</html>
