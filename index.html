@@ -12,6 +12,8 @@
   <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
   <!-- Three.js UMD (r147 — última versión con build no-ESM). Expone window.THREE. -->
   <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <!-- Framer Motion UMD — expone window.Motion (motion, AnimatePresence, useInView…) -->
+  <script src="https://cdn.jsdelivr.net/npm/framer-motion@11.11.17/dist/framer-motion.js"></script>
   <style>
     html, body { background: #FFFFFF; margin: 0; padding: 0; min-height: 100vh; font-family: "Geist", system-ui, sans-serif; }
     #root { min-height: 100vh; }
@@ -167,6 +169,83 @@
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef, useMemo } = React;
+
+/* ============================================================
+   FRAMER MOTION — helpers de animación on-scroll
+   · Si la librería no cargó (offline / CDN caído), todo se
+     renderiza estático sin animación (fallback transparente).
+   ============================================================ */
+const FM = (typeof window !== 'undefined') ? window.Motion : null;
+const motion = FM && FM.motion;
+
+const EASE_CINE = [0.22, 1, 0.36, 1];  // ease "expo.out" — cinemático
+
+/** Aparece desde abajo con fade. Úsalo para envolver un bloque. */
+function Reveal({ children, delay = 0, y = 60, duration = 1.1, once = true, className, style }) {
+  if (!motion) return <div className={className} style={style}>{children}</div>;
+  return (
+    <motion.div
+      className={className}
+      style={style}
+      initial={{ opacity: 0, y }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once, margin: '-10% 0px -10% 0px' }}
+      transition={{ duration, delay, ease: EASE_CINE }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+/** Stagger de hijos directos. Los hijos heredan el efecto fade-up. */
+function Stagger({ children, gap = 0.09, delay = 0, y = 48, duration = 1.0, className, style, as = 'div' }) {
+  if (!motion) {
+    const Tag = as;
+    return <Tag className={className} style={style}>{children}</Tag>;
+  }
+  const Mtag = motion[as] || motion.div;
+  const childVariants = {
+    hidden:  { opacity: 0, y },
+    visible: { opacity: 1, y: 0, transition: { duration, ease: EASE_CINE } },
+  };
+  return (
+    <Mtag
+      className={className}
+      style={style}
+      initial="hidden"
+      whileInView="visible"
+      viewport={{ once: true, margin: '-8% 0px -8% 0px' }}
+      transition={{ staggerChildren: gap, delayChildren: delay }}
+      variants={{ hidden: {}, visible: {} }}
+    >
+      {React.Children.map(children, (child, i) => (
+        child == null || child === false
+          ? null
+          : <motion.div variants={childVariants} key={i}>{child}</motion.div>
+      ))}
+    </Mtag>
+  );
+}
+
+/** Tarjeta con micro-hover: lift + glow sutil. */
+function MotionCard({ children, onClick, className, delay = 0, index = 0 }) {
+  if (!motion) {
+    return <div className={className} onClick={onClick}>{children}</div>;
+  }
+  return (
+    <motion.div
+      className={className}
+      onClick={onClick}
+      initial={{ opacity: 0, y: 40 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-5% 0px -5% 0px' }}
+      transition={{ duration: 0.85, ease: EASE_CINE, delay: delay + index * 0.06 }}
+      whileHover={{ y: -8, transition: { duration: 0.35, ease: EASE_CINE } }}
+    >
+      {children}
+    </motion.div>
+  );
+}
 
 /* === ICONOS principales (los que el código de App utiliza) === */
 const __ic = (paths, p) => (
@@ -869,7 +948,7 @@ function ThemeStyles() {
         z-index: 0;
       }
       .tn-bottle-stage::after {
-        /* Aureola dorada + azul atmosférica */
+        /* Aureola sutil — atmósfera ligera, no cinemática */
         content: ""; position: absolute; left: 4%; right: 4%;
         top: 20%; height: 65%; border-radius: 50%;
         background: radial-gradient(ellipse at 50% 55%,
@@ -1529,7 +1608,7 @@ function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filter
   return (
     <main className="tn-main">
       <section className="tn-hero tn-hero--home">
-        <div className="tn-hero-left">
+        <Stagger className="tn-hero-left" gap={0.11} duration={1.05} y={56}>
           <span className="tn-pill">
             <span className="dot" />
             IA · En línea
@@ -1606,13 +1685,9 @@ function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filter
               <button onClick={onRetry || onSubmit}>Reintentar →</button>
             </div>
           )}
-        </div>
+        </Stagger>
 
-        <div className="tn-hero-right" aria-hidden="true">
-          <div className="tn-bottle-stage">
-            <HeroBottle3D />
-          </div>
-        </div>
+        <HeroBottleColumn />
       </section>
 
       <Footer />
@@ -1621,19 +1696,41 @@ function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filter
 }
 
 /* ============================================================
-   HERO BOTTLE 3D v2 — Three.js (r147 UMD)
+   HERO BOTTLE COLUMN — wrapper animado del frasco
+   · Entra desde la derecha con scale + fade (look cinemático).
+   ============================================================ */
+function HeroBottleColumn() {
+  if (!motion) {
+    return (
+      <div className="tn-hero-right" aria-hidden="true">
+        <div className="tn-bottle-stage">
+          <HeroBottle3D />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <motion.div
+      className="tn-hero-right"
+      aria-hidden="true"
+      initial={{ opacity: 0, scale: 0.86, x: 40 }}
+      animate={{ opacity: 1, scale: 1, x: 0 }}
+      transition={{ duration: 1.4, ease: EASE_CINE, delay: 0.25 }}
+    >
+      <div className="tn-bottle-stage">
+        <HeroBottle3D />
+      </div>
+    </motion.div>
+  );
+}
 
-   Mejoras:
-   · Frasco esbelto con "cintura" y perfil de alta costura
-   · Tapa dorada metálica (MeshStandardMaterial) con 6 ranuras knurling
-   · 3 luces de punto orbitando (azul, dorado, blanco)
-   · Flotación suave + paralaje de ratón
-   · 70 partículas de spray siguiendo la boquilla en world-space
-   · 320 micropartículas ambientales (campo de polvo)
-   · 3 halos giratorios (azul, dorado, blanco fantasma)
-   · Glow sphere pulsante alrededor del cap
-   · Anillo de base dorado pulsante
-   · Color del líquido anima de ámbar → azul durante el llenado
+/* ============================================================
+   HERO BOTTLE 3D — Three.js (r147 UMD) · v3 "Simple & Clean"
+   · LatheGeometry clásica (cuerpo + hombros + cuello).
+   · Cristal con transmission moderada (no traga el líquido).
+   · Líquido azul OPACO bien visible.
+   · Tapa cilíndrica dorada simple.
+   · Iluminación 3-point limpia. Sombra blur. Flotación + rotación.
    ============================================================ */
 function HeroBottle3D() {
   const mountRef = useRef(null);
@@ -1651,409 +1748,423 @@ function HeroBottle3D() {
     const reducedMotion = window.matchMedia &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // ── Renderer ──────────────────────────────────────────────
     const W = mount.clientWidth  || 420;
     const H = mount.clientHeight || 560;
     const renderer = new T.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputEncoding = T.sRGBEncoding;
+    renderer.toneMapping = T.NoToneMapping;
+    renderer.toneMappingExposure = 1.0;
     renderer.localClippingEnabled = true;
     mount.appendChild(renderer.domElement);
 
+    const toDispose = [];
+
     const scene  = new T.Scene();
-    const camera = new T.PerspectiveCamera(28, W / H, 0.1, 120);
-    camera.position.set(0, 3.8, 12);
-    camera.lookAt(0, 2.6, 0);
+    const camera = new T.PerspectiveCamera(28, W / H, 0.1, 100);
+    camera.position.set(0, 2.5, 12.0);
+    camera.lookAt(0, 2.3, 0);
 
-    // ── Mouse parallax ────────────────────────────────────────
-    const mouse = { x: 0, y: 0 };
-    const onMM = (e) => {
-      const r = mount.getBoundingClientRect();
-      mouse.x = ((e.clientX - r.left) / r.width  - 0.5) * 2;
-      mouse.y = ((e.clientY - r.top)  / r.height - 0.5) * 2;
-    };
-    mount.addEventListener('mousemove', onMM);
+    // EnvMap: estudio neutro/frío — para que la plata refleje gris-acero
+    //  (no cream ni amarillo). Dos softboxes claros lateralmente.
+    const envRT = (() => {
+      const W2 = 512, H2 = 256;
+      const c = document.createElement('canvas');
+      c.width = W2; c.height = H2;
+      const ctx = c.getContext('2d');
+      // Cielo neutro: blanco frío arriba → gris claro abajo
+      const g = ctx.createLinearGradient(0, 0, 0, H2);
+      g.addColorStop(0.00, '#e8edf2');
+      g.addColorStop(0.45, '#d4dae1');
+      g.addColorStop(1.00, '#7a8590');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W2, H2);
+      // Softboxes blancos (luz neutra)
+      const sun = (cx, cy, r, col) => {
+        const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        rg.addColorStop(0.0, col);
+        rg.addColorStop(1.0, 'rgba(255,255,255,0)');
+        ctx.fillStyle = rg; ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+      };
+      sun(W2 * 0.25, H2 * 0.30, 140, 'rgba(255, 255, 255, 0.95)');
+      sun(W2 * 0.75, H2 * 0.28, 120, 'rgba(245, 248, 252, 0.85)');
 
-    // ── Luces ─────────────────────────────────────────────────
-    scene.add(new T.AmbientLight(0xFFFFFF, 0.38));
-    const keyL = new T.DirectionalLight(0xFFF8F0, 1.5);
-    keyL.position.set(5, 10, 7); scene.add(keyL);
-    const rimL = new T.DirectionalLight(0xC0DEFF, 0.65);
-    rimL.position.set(-7, 3, -6); scene.add(rimL);
-    const fillL = new T.DirectionalLight(0xFFF0C8, 0.40);
-    fillL.position.set(0, -2, 6); scene.add(fillL);
+      const equirect = new T.CanvasTexture(c);
+      equirect.mapping  = T.EquirectangularReflectionMapping;
+      equirect.encoding = T.sRGBEncoding;
+      equirect.needsUpdate = true;
 
-    // 3 luces orbitando: azul · dorado · blanco
-    const OL = [
-      { col: 0x4FB5E8, int: 2.2, r: 3.4, y: 3.2, phi: 0,               spd: 0.52 },
-      { col: 0xFFCC44, int: 1.8, r: 4.2, y: 1.8, phi: Math.PI*2/3,     spd: 0.36 },
-      { col: 0xFFFFFF, int: 1.3, r: 2.8, y: 5.0, phi: Math.PI*4/3,     spd: 0.68 },
-    ];
-    const orbitLights = OL.map(c => {
-      const pl = new T.PointLight(c.col, c.int, 14, 1.5);
-      scene.add(pl); pl.__c = c; return pl;
-    });
+      const pmrem = new T.PMREMGenerator(renderer);
+      pmrem.compileEquirectangularShader();
+      const rt = pmrem.fromEquirectangular(equirect);
+      pmrem.dispose();
+      equirect.dispose();
+      return rt;
+    })();
+    scene.environment = envRT.texture;
+    toDispose.push({ dispose: () => envRT.dispose() });
 
-    // ── Grupo flotante (todo el frasco) ───────────────────────
+    // Iluminación 3-point neutra (sin cálida para que la plata salga gris)
+    scene.add(new T.AmbientLight(0xFFFFFF, 0.40));
+    const keyL = new T.DirectionalLight(0xFFFFFF, 1.05);
+    keyL.position.set(4, 8, 6); scene.add(keyL);
+    const fillL = new T.DirectionalLight(0xCFE0F0, 0.45);
+    fillL.position.set(-5, 3, 4); scene.add(fillL);
+    const rimL = new T.DirectionalLight(0xFFFFFF, 0.50);
+    rimL.position.set(0, 4, -6); scene.add(rimL);
+
+    // Grupo principal
     const btl = new T.Group();
     scene.add(btl);
 
-    // ── Perfil esbelto con cintura sutil ──────────────────────
-    const prof = [
-      new T.Vector2(0.001, 0.00),
-      new T.Vector2(0.62,  0.00),
-      new T.Vector2(0.95,  0.15),
-      new T.Vector2(1.18,  0.40),
-      new T.Vector2(1.22,  0.78),
-      new T.Vector2(1.19,  1.55),
-      new T.Vector2(1.16,  2.00),
-      new T.Vector2(1.19,  2.52),
-      new T.Vector2(1.15,  3.05),
-      new T.Vector2(0.96,  3.45),
-      new T.Vector2(0.64,  3.72),
-      new T.Vector2(0.46,  3.94),
-      new T.Vector2(0.44,  4.40),
-    ];
-    const SEG  = 120;
-    const NTOP = 4.40;
-    const FLVL = 3.68;
+    // ── Silueta del frasco — esquinas inferiores muy redondeadas
+    const BW   = 1.08;   // semianchura del cuerpo (X)
+    const BD   = 0.52;   // semi-profundidad (Z)
+    const BR   = 0.55;   // esquinas inferiores grandes (look soft)
+    const Y_BASE     = 0.05;
+    const Y_BODY_TOP = 2.95;
+    const Y_NECK_BOT = 3.30;
+    const Y_NECK_TOP = 3.70;
+    const NECK_W     = 0.38;
 
-    const toDispose = [];
+    // Shape de perfil frontal: rectángulo con esquinas inferiores
+    // redondeadas, hombros inclinados, y cuello recto arriba.
+    const shape = new T.Shape();
+    shape.moveTo(-BW + BR, Y_BASE);
+    shape.lineTo( BW - BR, Y_BASE);
+    shape.quadraticCurveTo( BW, Y_BASE,  BW, Y_BASE + BR);
+    shape.lineTo( BW, Y_BODY_TOP);                          // pared derecha
+    shape.lineTo( NECK_W, Y_NECK_BOT);                      // hombro derecho
+    shape.lineTo( NECK_W, Y_NECK_TOP);                      // cuello derecho
+    shape.lineTo(-NECK_W, Y_NECK_TOP);                      // tope cuello
+    shape.lineTo(-NECK_W, Y_NECK_BOT);                      // cuello izquierdo
+    shape.lineTo(-BW, Y_BODY_TOP);                          // hombro izquierdo
+    shape.lineTo(-BW, Y_BASE + BR);                         // pared izquierda
+    shape.quadraticCurveTo(-BW, Y_BASE, -BW + BR, Y_BASE);
 
-    // Vidrio exterior — alta reflexión especular
-    const glassGeo = new T.LatheGeometry(prof, SEG);
-    const glassMat = new T.MeshPhongMaterial({
-      color: 0xFFFFFF, transparent: true, opacity: 0.13,
-      shininess: 220, specular: 0xFFFFFF,
-      side: T.DoubleSide, depthWrite: false,
+    const bodyGeo = new T.ExtrudeGeometry(shape, {
+      depth: BD * 2,
+      bevelEnabled: true,
+      bevelSize: 0.03,
+      bevelThickness: 0.03,
+      bevelSegments: 2,
+      curveSegments: 12,
     });
-    btl.add(new T.Mesh(glassGeo, glassMat));
-    toDispose.push(glassGeo, glassMat);
+    bodyGeo.translate(0, 0, -BD);   // centrar en Z
+    toDispose.push(bodyGeo);
 
-    // Contorno de silueta
-    const edgesGeo = new T.EdgesGeometry(glassGeo, 22);
-    const edgesMat = new T.LineBasicMaterial({ color: 0x88BBCC, transparent: true, opacity: 0.40 });
-    btl.add(new T.LineSegments(edgesGeo, edgesMat));
-    toDispose.push(edgesGeo, edgesMat);
-
-    // Capa interior tintada (profundidad de vidrio)
-    const innerProf = prof.map(v => new T.Vector2(Math.max(0.001, v.x * 0.90), v.y));
-    const innerGeo  = new T.LatheGeometry(innerProf, SEG);
-    const innerMat  = new T.MeshPhongMaterial({
-      color: 0xD0EAFF, transparent: true, opacity: 0.055,
-      shininess: 50, side: T.BackSide, depthWrite: false,
+    // Cristal: azul más oscuro y opaco — fondo para que el líquido destaque
+    const bodyMat = new T.MeshPhysicalMaterial({
+      color: 0x16294A,
+      metalness: 0.0,
+      roughness: 0.05,
+      ior: 1.5,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.04,
+      envMapIntensity: 0.5,
+      transparent: true,
+      opacity: 0.78,
+      side: T.DoubleSide,
     });
-    btl.add(new T.Mesh(innerGeo, innerMat));
-    toDispose.push(innerGeo, innerMat);
+    const bodyMesh = new T.Mesh(bodyGeo, bodyMat);
+    btl.add(bodyMesh);
+    toDispose.push(bodyMat);
 
-    // ── Líquido + plano de corte ──────────────────────────────
-    const liqProf = prof.map(v => new T.Vector2(Math.max(0.001, v.x - 0.10), v.y));
-    const liqGeo  = new T.LatheGeometry(liqProf, SEG);
+    // Aristas suaves del cristal — sólo las salientes (>40°) para no
+    //  llenar de líneas las facetas internas del extrude.
+    const bodyEdges = new T.EdgesGeometry(bodyGeo, 40);
+    const bodyEdgeMat = new T.LineBasicMaterial({
+      color: 0x0A1428, transparent: true, opacity: 0.45,
+    });
+    btl.add(new T.LineSegments(bodyEdges, bodyEdgeMat));
+    toDispose.push(bodyEdges, bodyEdgeMat);
+
+    // Líquido azul dentro del cuerpo — Box que empieza por encima del
+    //  radio de las esquinas (BR) para no sobresalir lateralmente.
+    const liqInset = 0.06;
+    const liqW = (BW - liqInset) * 2;
+    const liqD = (BD - liqInset) * 2;
+    const LIQ_BOX_BOTTOM = Y_BASE + BR;          // tope de las esquinas curvas
+    const liqHFull = (Y_BODY_TOP - LIQ_BOX_BOTTOM) - liqInset;
+    const liqGeo = new T.BoxGeometry(liqW, liqHFull, liqD);
     const fillPlane = new T.Plane(new T.Vector3(0, -1, 0), 0);
-    const liqMat  = new T.MeshPhongMaterial({
-      color: 0xE8820A, shininess: 100, specular: 0xFFD080,
-      transparent: true, opacity: 0.88,
-      clippingPlanes: [fillPlane], clipShadows: false, side: T.DoubleSide,
+    const liqMat = new T.MeshPhysicalMaterial({
+      color: 0x4FBFF0,
+      metalness: 0.0,
+      roughness: 0.10,
+      ior: 1.36,
+      clearcoat: 0.7,
+      clearcoatRoughness: 0.10,
+      envMapIntensity: 0.5,
+      transparent: true,
+      opacity: 0.92,
+      side: T.DoubleSide,
+      emissive: 0x1F7EC2,
+      emissiveIntensity: 0.45,
+      clippingPlanes: [fillPlane],
+      clipShadows: false,
     });
     const liqMesh = new T.Mesh(liqGeo, liqMat);
+    liqMesh.position.y = LIQ_BOX_BOTTOM + liqHFull / 2;
     btl.add(liqMesh);
     toDispose.push(liqGeo, liqMat);
 
-    // Menisco
-    const surfGeo = new T.CircleGeometry(1.0, 64);
+    // Menisco superior: PlaneGeometry subdividida — sus vértices oscilan
+    //  cada frame para simular pequeñas ondas en la superficie.
+    const surfGeo = new T.PlaneGeometry(liqW, liqD, 24, 12);
     surfGeo.rotateX(-Math.PI / 2);
-    const surfMat = new T.MeshBasicMaterial({
-      color: 0xFFDDA0, transparent: true, opacity: 0.55, side: T.DoubleSide,
+    const surfMat = new T.MeshPhysicalMaterial({
+      color: 0x6FCEF4,
+      metalness: 0.0,
+      roughness: 0.05,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.03,
+      envMapIntensity: 1.3,
+      emissive: 0x2A8DD0,
+      emissiveIntensity: 0.30,
     });
     const surfMesh = new T.Mesh(surfGeo, surfMat);
     btl.add(surfMesh);
     toDispose.push(surfGeo, surfMat);
 
-    function radiusAt(y) {
-      for (let i = 0; i < liqProf.length - 1; i++) {
-        const a = liqProf[i], b = liqProf[i + 1];
-        if (y >= a.y && y <= b.y) {
-          const u = b.y === a.y ? 0 : (y - a.y) / (b.y - a.y);
-          return a.x + (b.x - a.x) * u;
-        }
-      }
-      return liqProf[liqProf.length - 1].x;
-    }
+    // Guardamos las posiciones base de la superficie para animar las ondas
+    const surfPos = surfGeo.attributes.position;
+    const surfBaseY = new Float32Array(surfPos.count);
+    for (let i = 0; i < surfPos.count; i++) surfBaseY[i] = surfPos.getY(i);
 
-    // ── Etiqueta cilíndrica ───────────────────────────────────
-    const lblGeo = new T.CylinderGeometry(1.22, 1.22, 1.50, SEG, 1, true,
-      -Math.PI * 0.50, Math.PI);
-    const lblMat = new T.MeshStandardMaterial({
-      color: 0xF9F5EE, roughness: 0.92, metalness: 0,
-      transparent: true, opacity: 0.65, side: T.DoubleSide,
+    // ── Plata metálica real (metalness alto, base gris-fría neutra)
+    const silverMat = new T.MeshPhysicalMaterial({
+      color: 0xB8BEC6,
+      metalness: 1.0,
+      roughness: 0.28,
+      envMapIntensity: 1.2,
+      clearcoat: 0.6,
+      clearcoatRoughness: 0.10,
     });
-    const lblMesh = new T.Mesh(lblGeo, lblMat);
-    lblMesh.position.y = 1.65;
-    btl.add(lblMesh);
-    toDispose.push(lblGeo, lblMat);
+    toDispose.push(silverMat);
 
-    // ── Tapa dorada (MeshStandardMaterial PBR) ────────────────
-    const goldMat = new T.MeshStandardMaterial({
-      color: 0xC8A84B, metalness: 1.0, roughness: 0.12,
+    // Aristas plata para reforzar siluetas metálicas
+    const silverEdgeMat = new T.LineBasicMaterial({
+      color: 0x3A4250, transparent: true, opacity: 0.6,
     });
-    const darkGoldMat = new T.MeshStandardMaterial({
-      color: 0x9A7830, metalness: 1.0, roughness: 0.28,
-    });
-    toDispose.push(goldMat, darkGoldMat);
+    toDispose.push(silverEdgeMat);
 
-    const capGeo = new T.CylinderGeometry(0.50, 0.52, 0.95, 64);
-    const capMesh = new T.Mesh(capGeo, goldMat);
-    capMesh.position.y = NTOP + 0.475;
+    // ── Collarín ancho plateado sobre el cuello (joyería geométrica)
+    const collarGeo = new T.BoxGeometry(NECK_W * 2 + 0.10, 0.08, BD * 2 + 0.10);
+    const collarMesh = new T.Mesh(collarGeo, silverMat);
+    collarMesh.position.y = Y_NECK_TOP + 0.04;
+    collarMesh.add(new T.LineSegments(new T.EdgesGeometry(collarGeo), silverEdgeMat));
+    btl.add(collarMesh);
+    toDispose.push(collarGeo);
+
+    // ── Base biselada bajo la tapa (pieza intermedia para joya apilada)
+    const baseCapGeo = new T.BoxGeometry(NECK_W * 2 + 0.18, 0.14, BD * 2 + 0.18);
+    const baseCapMesh = new T.Mesh(baseCapGeo, silverMat);
+    baseCapMesh.position.y = Y_NECK_TOP + 0.08 + 0.07;
+    baseCapMesh.add(new T.LineSegments(new T.EdgesGeometry(baseCapGeo), silverEdgeMat));
+    btl.add(baseCapMesh);
+    toDispose.push(baseCapGeo);
+
+    // ── Tapa principal: prisma plateado encima de la base
+    const CAP_W = NECK_W + 0.06;
+    const CAP_H = 0.50;
+    const CAP_D = BD + 0.03;
+    const capGeo = new T.BoxGeometry(CAP_W * 2, CAP_H, CAP_D * 2);
+    const capMesh = new T.Mesh(capGeo, silverMat);
+    capMesh.position.y = Y_NECK_TOP + 0.22 + CAP_H / 2;
+    capMesh.add(new T.LineSegments(new T.EdgesGeometry(capGeo), silverEdgeMat));
     btl.add(capMesh);
     toDispose.push(capGeo);
 
-    // Ranuras de knurling (6 anillos)
-    for (let i = 0; i < 6; i++) {
-      const rg = new T.TorusGeometry(0.52, 0.014, 8, 64);
-      const rm = new T.Mesh(rg, darkGoldMat);
-      rm.position.y = NTOP + 0.10 + i * 0.14;
-      btl.add(rm);
-      toDispose.push(rg);
-    }
+    // ── Etiqueta estilo Tom Ford: rectángulo marfil con marco dorado,
+    //    serif elegante en mayúsculas, descriptor abajo, líneas decorativas.
+    const labelTex = (() => {
+      const cw = 1024, ch = 768;
+      const c = document.createElement('canvas');
+      c.width = cw; c.height = ch;
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, cw, ch);
 
-    // Domo superior de la tapa
-    const domeGeo = new T.SphereGeometry(0.50, 48, 16, 0, Math.PI*2, 0, Math.PI*0.5);
-    const domeMesh = new T.Mesh(domeGeo, goldMat);
-    domeMesh.position.y = NTOP + 0.95;
-    btl.add(domeMesh);
-    toDispose.push(domeGeo);
+      // Fondo marfil cálido
+      ctx.fillStyle = '#EFE7D6';
+      ctx.fillRect(0, 0, cw, ch);
 
-    // Botón atomizador
-    const btnGeo = new T.CylinderGeometry(0.26, 0.28, 0.16, 32);
-    const btnMesh = new T.Mesh(btnGeo, goldMat);
-    btnMesh.position.y = NTOP + 1.12;
-    btl.add(btnMesh);
-    toDispose.push(btnGeo);
+      // Sombras internas suaves (lados)
+      const sideShade = ctx.createLinearGradient(0, 0, cw, 0);
+      sideShade.addColorStop(0,   'rgba(110, 85, 40, 0.15)');
+      sideShade.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
+      sideShade.addColorStop(1,   'rgba(110, 85, 40, 0.15)');
+      ctx.fillStyle = sideShade;
+      ctx.fillRect(0, 0, cw, ch);
 
-    // Nozzle lateral
-    const nozzGeo = new T.CylinderGeometry(0.052, 0.052, 0.22, 16);
-    const nozzMat = new T.MeshStandardMaterial({ color: 0x907028, metalness: 0.9, roughness: 0.28 });
-    const nozzMesh = new T.Mesh(nozzGeo, nozzMat);
-    nozzMesh.rotation.z = Math.PI / 2;
-    nozzMesh.position.set(0.50, NTOP + 0.60, 0);
-    btl.add(nozzMesh);
-    toDispose.push(nozzGeo, nozzMat);
+      // Marco dorado brillante — grueso para que se vea a la escala del frasco
+      const FRAME = '#D4A937';
+      ctx.strokeStyle = FRAME;
+      ctx.lineWidth = 14;
+      ctx.strokeRect(28, 28, cw - 56, ch - 56);
+      ctx.lineWidth = 5;
+      ctx.strokeRect(58, 58, cw - 116, ch - 116);
 
-    // ── Anillo de base dorado pulsante ────────────────────────
-    const bRingGeo = new T.TorusGeometry(0.68, 0.055, 16, 64);
-    const bRingMat = new T.MeshStandardMaterial({
-      color: 0xC8A84B, metalness: 1.0, roughness: 0.10,
-      emissive: 0xC8A84B, emissiveIntensity: 0,
+      // Líneas decorativas horizontales con diamante central
+      const orn = (cy) => {
+        ctx.strokeStyle = FRAME;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(cw * 0.28, cy);
+        ctx.lineTo(cw * 0.44, cy);
+        ctx.moveTo(cw * 0.56, cy);
+        ctx.lineTo(cw * 0.72, cy);
+        ctx.stroke();
+        // Diamante central (más grande)
+        ctx.beginPath();
+        ctx.moveTo(cw * 0.50, cy - 16);
+        ctx.lineTo(cw * 0.50 + 16, cy);
+        ctx.lineTo(cw * 0.50, cy + 16);
+        ctx.lineTo(cw * 0.50 - 16, cy);
+        ctx.closePath();
+        ctx.fillStyle = FRAME;
+        ctx.fill();
+      };
+      orn(178);
+      orn(ch - 178);
+
+      // Título serif TOPNOTE en mayúsculas, color marrón profundo
+      ctx.fillStyle = '#2A1E0A';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '700 162px "Times New Roman", "Georgia", serif';
+      ctx.fillText('TOPNOTE', cw / 2, ch / 2 - 30);
+
+      // Subtítulo
+      ctx.font = '500 46px "Times New Roman", "Georgia", serif';
+      ctx.letterSpacing = '8px';
+      ctx.fillStyle = '#5A4218';
+      ctx.fillText('FRAGRANCE  GUIDE', cw / 2, ch / 2 + 90);
+
+      // Línea muy fina bajo el subtítulo
+      ctx.strokeStyle = '#5A4218';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cw * 0.36, ch / 2 + 140);
+      ctx.lineTo(cw * 0.64, ch / 2 + 140);
+      ctx.stroke();
+
+      const tex = new T.CanvasTexture(c);
+      tex.encoding = T.sRGBEncoding;
+      tex.anisotropy = 8;
+      return tex;
+    })();
+    toDispose.push({ dispose: () => labelTex.dispose() });
+
+    // Etiqueta proporcional al cuerpo (más ancha que alta)
+    const labelW = BW * 1.45;
+    const labelH = labelW * (768 / 1024);
+    const labelGeo = new T.PlaneGeometry(labelW, labelH);
+    const labelMat = new T.MeshBasicMaterial({
+      map: labelTex,
+      transparent: true,
+      depthWrite: false,
     });
-    const bRing = new T.Mesh(bRingGeo, bRingMat);
-    bRing.position.y = 0.055;
-    btl.add(bRing);
-    toDispose.push(bRingGeo, bRingMat);
+    // Posición ligeramente por delante del cristal
+    const labelZ = BD + 0.045;
+    const labelFront = new T.Mesh(labelGeo, labelMat);
+    labelFront.position.set(0, (Y_BASE + Y_BODY_TOP) / 2, labelZ);
+    btl.add(labelFront);
+    const labelBack = new T.Mesh(labelGeo, labelMat);
+    labelBack.position.set(0, (Y_BASE + Y_BODY_TOP) / 2, -labelZ);
+    labelBack.rotation.y = Math.PI;
+    btl.add(labelBack);
+    toDispose.push(labelGeo, labelMat);
 
-    // ── Esfera de glow alrededor del cap ──────────────────────
-    const glowGeo = new T.SphereGeometry(0.90, 32, 32);
-    const glowMat = new T.MeshBasicMaterial({
-      color: 0x4FB5E8, transparent: true, opacity: 0,
-      depthWrite: false, side: T.BackSide,
-    });
-    const glowMesh = new T.Mesh(glowGeo, glowMat);
-    glowMesh.scale.set(1.8, 1.1, 1.8);
-    glowMesh.position.y = NTOP + 0.55;
-    btl.add(glowMesh);
-    toDispose.push(glowGeo, glowMat);
-
-    // ── 3 Halos giratorios ────────────────────────────────────
-    const makeHalo = (radius, tube, col, opa, rx, ry, rz) => {
-      const g = new T.TorusGeometry(radius, tube, 8, 180);
-      const m = new T.MeshBasicMaterial({ color: col, transparent: true, opacity: opa, depthWrite: false });
-      const h = new T.Mesh(g, m);
-      h.rotation.set(rx, ry, rz);
-      h.position.y = 2.6;
-      scene.add(h);
-      toDispose.push(g, m);
-      return { mesh: h, mat: m };
-    };
-    const halo1 = makeHalo(2.6, 0.022, 0x4FB5E8, 0.20, Math.PI/2, 0, 0);
-    const halo2 = makeHalo(2.0, 0.018, 0xD4AF37, 0.16, Math.PI/3, 0, Math.PI/5);
-    const halo3 = makeHalo(3.2, 0.014, 0xFFFFFF, 0.08, -Math.PI/5, Math.PI/7, Math.PI/3);
-
-    // ── Campo de 320 micropartículas ──────────────────────────
-    const AMB = 320;
-    const ambPos = new Float32Array(AMB * 3);
-    for (let i = 0; i < AMB; i++) {
-      ambPos[i*3]   = (Math.random() - 0.5) * 10;
-      ambPos[i*3+1] = Math.random() * 9;
-      ambPos[i*3+2] = (Math.random() - 0.5) * 10;
-    }
-    const ambGeo = new T.BufferGeometry();
-    ambGeo.setAttribute('position', new T.BufferAttribute(ambPos, 3));
-    const ambMat = new T.PointsMaterial({
-      color: 0x7FCAEE, size: 0.028, transparent: true,
-      opacity: 0.28, depthWrite: false, sizeAttenuation: true,
-    });
-    scene.add(new T.Points(ambGeo, ambMat));
-    toDispose.push(ambGeo, ambMat);
-
-    // ── Sombra de suelo ───────────────────────────────────────
-    const shdGeo = new T.CircleGeometry(1.9, 64);
+    // Sombra elíptica difusa debajo
+    const shdGeo = new T.CircleGeometry(BW * 1.5, 64);
     shdGeo.rotateX(-Math.PI / 2);
     const shdMat = new T.MeshBasicMaterial({
-      color: 0x0A0F1F, transparent: true, opacity: 0.08, depthWrite: false,
+      color: 0x0A0F1F, transparent: true, opacity: 0.22, depthWrite: false,
     });
     const shdMesh = new T.Mesh(shdGeo, shdMat);
-    shdMesh.position.y = 0.003;
+    shdMesh.position.y = 0.001;
+    shdMesh.scale.set(1.0, 1.0, 0.55);
     scene.add(shdMesh);
     toDispose.push(shdGeo, shdMat);
 
-    // ── 70 partículas de spray (cloud) ────────────────────────
-    const sprayGeo = new T.SphereGeometry(1, 7, 7);
-    const sprayMats = [0x4FB5E8, 0x8FD0F5, 0xFFFFFF].map(c =>
-      new T.MeshBasicMaterial({ color: c, transparent: true, opacity: 0, depthWrite: false })
-    );
-    const spray = Array.from({ length: 70 }, (_, i) => {
-      const m = new T.Mesh(sprayGeo, sprayMats[i % 3]);
-      m.visible = false;
-      m.userData = {
-        emitT: 0.48 + (i / 70) * 0.36,
-        xOff: (Math.random() - 0.5) * 0.90,
-        zOff: (Math.random() - 0.5) * 0.90,
-        wob:  Math.random() * Math.PI * 2,
-        sz:   0.030 + Math.random() * 0.055,
-      };
-      scene.add(m); return m;
-    });
-    toDispose.push(sprayGeo, ...sprayMats);
+    const TOP_Y = Y_NECK_TOP + 0.10 + CAP_H;
 
-    // ── Loop principal ────────────────────────────────────────
+    // Loop: flotación + rotación + ciclo de llenado del líquido +
+    //   ondas en la superficie del menisco + chapoteo lateral
+    //   LIQ_MIN se mantiene por encima del radio de las esquinas
+    //   redondeadas (BR) para que el menisco nunca sobresalga.
+    const LIQ_MIN = Y_BASE + BR + 0.25;
+    const LIQ_MAX = Y_BODY_TOP - 0.10;
+    const LOOP_S  = 9.0;
     const clock = new T.Clock();
-    const LOOP = 11.0;
     let raf = 0, alive = true;
-    let mLX = 0, mLY = 0;
-    const nozzWP = new T.Vector3();
-
-    // Fases del ciclo de llenado
-    const FS = 0.08, FE = 0.48, HE = 0.78, EE = 0.94;
+    let prevRotY = 0;
+    let tiltX = 0, tiltZ = 0;       // inclinación del menisco (chapoteo)
 
     function step() {
       if (!alive) return;
       raf = requestAnimationFrame(step);
       const e = clock.getElapsedTime();
-      const t = reducedMotion ? 0.60 : (e % LOOP) / LOOP;
-
-      // — Flotación + paralaje —
       if (!reducedMotion) {
-        btl.position.y = Math.sin(e * 0.80) * 0.14;
-        btl.rotation.y = e * 0.20;
-        mLX += (mouse.x *  0.13 - mLX) * 0.055;
-        mLY += (mouse.y * -0.09 - mLY) * 0.055;
-        btl.rotation.z = Math.sin(e * 0.55) * 0.013 + mLX;
-        btl.rotation.x = Math.cos(e * 0.47) * 0.011 + mLY;
+        btl.position.y = Math.sin(e * 0.5) * 0.06;
+        btl.rotation.y = e * 0.18;
       }
 
-      // — Luces orbitando —
-      orbitLights.forEach(pl => {
-        const c = pl.__c;
-        const a = e * c.spd + c.phi;
-        pl.position.set(
-          Math.cos(a) * c.r,
-          c.y + Math.sin(e * 0.42 + c.phi) * 0.6,
-          Math.sin(a) * c.r,
-        );
-      });
-
-      // — Halos —
-      halo1.mesh.rotation.y =  e * 0.62;
-      halo2.mesh.rotation.y = -e * 0.44;
-      halo3.mesh.rotation.y =  e * 0.28;
-      const hp = 0.13 + Math.sin(e * 1.3) * 0.07;
-      halo1.mat.opacity = hp;
-      halo2.mat.opacity = hp * 0.80;
-      halo3.mat.opacity = hp * 0.42;
-
-      // — Campo ambiental —
-      ambMat.opacity = 0.20 + Math.sin(e * 0.65) * 0.09;
-
-      // — Ciclo de llenado —
-      let level = 0, opa = 0.88;
-      if (t < FS) {
-        level = 0; opa = 0.88;
-      } else if (t < FE) {
-        const u = (t - FS) / (FE - FS);
-        const ease = u < 0.5 ? 4*u*u*u : 1 - Math.pow(-2*u+2, 3)/2;
-        level = ease * FLVL;
-        opa   = 0.88;
-        // Ámbar → azul zafiro durante el llenado
-        liqMat.color.setHSL(0.07 + ease * 0.50, 0.82 + ease * 0.05, 0.55 + ease * 0.04);
-        surfMat.color.setHSL(0.10 + ease * 0.48, 0.80, 0.72);
-      } else if (t < HE) {
-        level = FLVL; opa = 0.88;
-        const sh = Math.sin(e * 2.0) * 0.015;
-        liqMat.color.setHSL(0.57 + sh, 0.85, 0.58);
-        surfMat.color.setHex(0xC8E8FC);
-      } else if (t < EE) {
-        const u = (t - HE) / (EE - HE);
-        level = FLVL; opa = 0.88 * (1 - u * u);
+      // Curva de relleno: subida (0-65%), hold (65-82%), bajada (82-95%), pausa (95-100%)
+      const t = reducedMotion ? 1.0 : (e % LOOP_S) / LOOP_S;
+      let level;
+      if (t < 0.65) {
+        const u = t / 0.65;
+        const ease = u * u * (3 - 2 * u);
+        level = LIQ_MIN + ease * (LIQ_MAX - LIQ_MIN);
+      } else if (t < 0.82) {
+        level = LIQ_MAX;
+      } else if (t < 0.95) {
+        const u = (t - 0.82) / 0.13;
+        const ease = u * u * (3 - 2 * u);
+        level = LIQ_MAX - ease * (LIQ_MAX - LIQ_MIN);
       } else {
-        level = 0; opa = 0;
+        level = LIQ_MIN;
       }
 
-      fillPlane.constant = level;
-      liqMat.opacity  = opa;
-      liqMesh.visible = opa > 0.01;
+      // Ligero "respiro" del nivel en el hold para que no se vea estático
+      const breath = (t > 0.65 && t < 0.82) ? Math.sin(e * 1.6) * 0.012 : 0;
+      const worldLevel = level + breath;
 
-      // Menisco
-      if (level > 0.01 && opa > 0.01) {
-        const r = radiusAt(level);
-        surfMesh.position.y = level - 0.001;
-        surfMesh.scale.set(r, 1, r);
-        surfMat.opacity = 0.55 * (opa / 0.88);
-        surfMesh.visible = true;
-      } else {
-        surfMesh.visible = false;
-      }
+      fillPlane.constant = worldLevel + btl.position.y;
+      surfMesh.position.y = worldLevel - 0.002;
+      surfMesh.visible = worldLevel > Y_BASE + 0.05;
 
-      // Glow pulsante
-      glowMat.opacity = (opa > 0.01 && t >= FE)
-        ? (0.04 + (Math.sin(e * 2.6) * 0.5 + 0.5) * 0.09) * (opa / 0.88)
-        : 0;
+      // ── Chapoteo: el menisco se inclina ligeramente cuando el frasco gira
+      const dRot = (btl.rotation.y - prevRotY);
+      prevRotY = btl.rotation.y;
+      // suavizado tipo spring hacia la dirección del giro
+      const targetTilt = Math.max(-0.10, Math.min(0.10, dRot * 12));
+      tiltZ += (targetTilt - tiltZ) * 0.08;
+      tiltX += (Math.sin(e * 0.7) * 0.025 - tiltX) * 0.06;
+      surfMesh.rotation.z = tiltZ;
+      surfMesh.rotation.x = tiltX;
 
-      // Anillo de base
-      bRingMat.emissiveIntensity = (t >= FE && t < EE)
-        ? 0.28 + Math.sin(e * 2.8) * 0.14 : 0;
-
-      // Sombra dinámica
-      shdMat.opacity = 0.05 + (level / FLVL) * 0.07;
-
-      // — Partículas de spray —
-      const emit = t >= FE && t < EE;
-      nozzMesh.getWorldPosition(nozzWP);
-      for (const p of spray) {
-        const ud = p.userData;
-        const age = ((t - ud.emitT + 1) % 1);
-        const LIFE = 0.30;
-        if (emit && age < LIFE) {
-          const u    = age / LIFE;
-          const ease = 1 - (1 - u) * (1 - u);
-          const wob  = Math.sin(e * 2.6 + ud.wob) * 0.09;
-          const spread = 0.30 + ease * 2.6;
-          p.position.set(
-            nozzWP.x + (ud.xOff + wob) * spread,
-            nozzWP.y + ease * 3.2,
-            nozzWP.z + (ud.zOff - wob) * spread,
-          );
-          p.scale.setScalar(ud.sz * 2 * (0.22 + ease * 2.2));
-          p.material.opacity = (1 - u * u) * 0.60;
-          p.visible = true;
-        } else {
-          p.visible = false;
+      // ── Ondas en la superficie del menisco (deformación de vertices)
+      if (!reducedMotion) {
+        const amp = 0.015;
+        for (let i = 0; i < surfPos.count; i++) {
+          const x = surfPos.getX(i);
+          const z = surfPos.getZ(i);
+          const wave = Math.sin(x * 7.0 + e * 2.4) * 0.6
+                     + Math.sin(z * 9.0 + e * 1.7) * 0.5
+                     + Math.sin((x + z) * 5.0 - e * 1.2) * 0.3;
+          surfPos.setY(i, surfBaseY[i] + wave * amp);
         }
+        surfPos.needsUpdate = true;
+        surfGeo.computeVertexNormals();
       }
 
       renderer.render(scene, camera);
     }
     step();
 
-    // ── Resize ────────────────────────────────────────────────
     const onResize = () => {
       const w = mount.clientWidth, h = mount.clientHeight;
       if (!w || !h) return;
@@ -2064,11 +2175,9 @@ function HeroBottle3D() {
     const ro = window.ResizeObserver ? new ResizeObserver(onResize) : null;
     if (ro) ro.observe(mount); else window.addEventListener('resize', onResize);
 
-    // ── Cleanup ───────────────────────────────────────────────
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
-      mount.removeEventListener('mousemove', onMM);
       if (ro) ro.disconnect(); else window.removeEventListener('resize', onResize);
       try { mount.removeChild(renderer.domElement); } catch (_e) {}
       toDispose.forEach(o => { try { o.dispose(); } catch (_e) {} });
@@ -2149,6 +2258,7 @@ function ResultsView({ query, filters, results, loading, error, onBack, onRetry,
 
   return (
     <main className="tn-main">
+      <Reveal y={40} duration={0.9}>
       <section className="tn-split" style={{ marginTop: 56 }}>
         <h2>
           {loading ? 'Buscando…' : 'Tus coincidencias'}
@@ -2171,6 +2281,7 @@ function ResultsView({ query, filters, results, loading, error, onBack, onRetry,
           </button>
         </div>
       </section>
+      </Reveal>
 
       {loading && <LoadingGrid />}
 
@@ -2195,6 +2306,7 @@ function ResultsView({ query, filters, results, loading, error, onBack, onRetry,
                 isFavorite={favorites.includes(r.id)}
                 onToggleFavorite={() => toggleFavorite(r.id)}
                 onOpen={() => onCardOpen({ perfume: p, score: r.score, reasoning: r.reasoning })}
+                index={i}
               />
             );
           })}
@@ -2209,7 +2321,7 @@ function ResultsView({ query, filters, results, loading, error, onBack, onRetry,
 /* ============================================================
    PERFUME CARD
    ============================================================ */
-function PerfumeCard({ perfume, rank, score, isFavorite, onToggleFavorite, onOpen }) {
+function PerfumeCard({ perfume, rank, score, isFavorite, onToggleFavorite, onOpen, index = 0 }) {
   const tint = getTint(perfume.familia);
   const initial = (perfume.nombre || '').replace(/[^A-Za-z0-9]/g, '').charAt(0).toUpperCase() || 'T';
   const notesSummary = [
@@ -2221,8 +2333,22 @@ function PerfumeCard({ perfume, rank, score, isFavorite, onToggleFavorite, onOpe
   const isTop = rank === 1 && score != null;
   const hasRating = typeof perfume.rating === 'number' && perfume.rating > 0;
 
+  // Si Framer Motion no está disponible, renderizamos un <article> normal.
+  const Card = motion ? motion.article : 'article';
+  const motionProps = motion ? {
+    initial: { opacity: 0, y: 50 },
+    whileInView: { opacity: 1, y: 0 },
+    viewport: { once: true, margin: '-5% 0px -5% 0px' },
+    transition: {
+      duration: 0.85,
+      ease: EASE_CINE,
+      delay: Math.min(index, 11) * 0.06,
+    },
+    whileHover: { y: -8, transition: { duration: 0.35, ease: EASE_CINE } },
+  } : {};
+
   return (
-    <article className="tn-card" onClick={onOpen}>
+    <Card className="tn-card" onClick={onOpen} {...motionProps}>
       <div className="tn-frame" style={{
         background: `linear-gradient(160deg, ${tint.from} 0%, ${tint.to} 100%)`,
       }}>
@@ -2257,7 +2383,7 @@ function PerfumeCard({ perfume, rank, score, isFavorite, onToggleFavorite, onOpe
         )}
       </div>
       <p className="tn-notes">{notesSummary || autoDesc(perfume)}</p>
-    </article>
+    </Card>
   );
 }
 
@@ -2347,7 +2473,8 @@ function ArchiveView({ favorites, history, toggleFavorite, onCardOpen, onRunHist
 
   return (
     <main className="tn-main">
-      <section className="tn-hero" style={{ padding: '64px 0 0' }}>
+      <Stagger as="section" gap={0.12} duration={1.0} y={48}
+               className="tn-hero" style={{ padding: '64px 0 0' }}>
         <span className="tn-pill">
           <span className="dot" />
           Tu colección
@@ -2355,8 +2482,9 @@ function ArchiveView({ favorites, history, toggleFavorite, onCardOpen, onRunHist
         <h1 className="tn-title">
           Tu <em>archivo.</em>
         </h1>
-      </section>
+      </Stagger>
 
+      <Reveal y={36} duration={0.9}>
       <section className="tn-split">
         <h2>
           Guardados
@@ -2366,6 +2494,7 @@ function ArchiveView({ favorites, history, toggleFavorite, onCardOpen, onRunHist
           <span>Tu lista personal · {fmtInt(CATALOG.length)} fragancias en catálogo</span>
         </div>
       </section>
+      </Reveal>
 
       {saved.length === 0 ? (
         <div className="tn-empty">
@@ -2376,7 +2505,7 @@ function ArchiveView({ favorites, history, toggleFavorite, onCardOpen, onRunHist
         </div>
       ) : (
         <section className="tn-grid">
-          {saved.map((p) => (
+          {saved.map((p, i) => (
             <PerfumeCard
               key={p.id}
               perfume={p}
@@ -2385,6 +2514,7 @@ function ArchiveView({ favorites, history, toggleFavorite, onCardOpen, onRunHist
               isFavorite={true}
               onToggleFavorite={() => toggleFavorite(p.id)}
               onOpen={() => onCardOpen({ perfume: p, score: null, reasoning: null })}
+              index={i}
             />
           ))}
         </section>
@@ -2508,7 +2638,8 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
 
   return (
     <main className="tn-main">
-      <section className="tn-hero" style={{ padding: '64px 0 0' }}>
+      <Stagger as="section" gap={0.10} duration={1.0} y={48}
+               className="tn-hero" style={{ padding: '64px 0 0' }}>
         <span className="tn-pill"><span className="dot" /> Catálogo</span>
         <h1 className="tn-title tn-title-compact">
           Explora el <em>archivo.</em>
@@ -2517,7 +2648,7 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
           {fmtInt(CATALOG.length)} fragancias indexadas. Filtra por familia, género o estación;
           busca por nombre o casa.
         </p>
-      </section>
+      </Stagger>
 
       <section className="tn-cat-bar">
         <div className="tn-cat-search-wrap">
@@ -2620,7 +2751,7 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
       ) : (
         <>
           <section className="tn-grid">
-            {pageItems.map((p) => (
+            {pageItems.map((p, i) => (
               <PerfumeCard
                 key={p.id}
                 perfume={p}
@@ -2629,6 +2760,7 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
                 isFavorite={favorites.includes(p.id)}
                 onToggleFavorite={() => toggleFavorite(p.id)}
                 onOpen={() => onCardOpen({ perfume: p, score: null, reasoning: null })}
+                index={i}
               />
             ))}
           </section>
@@ -2819,17 +2951,6 @@ function DetailModal({ perfume, score, reasoning, isFavorite, onToggleFavorite, 
               <button className="tn-btn tn-btn-primary" onClick={onSimilar}>
                 Ver similares <SvgArrowRightThick size={14} />
               </button>
-              {perfume.url && (
-                <a
-                  className="tn-btn tn-btn-ghost"
-                  href={perfume.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ textDecoration: 'none' }}
-                >
-                  Ver en Parfumo ↗
-                </a>
-              )}
             </div>
           </div>
         </div>
