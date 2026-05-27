@@ -4,9 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Top Note — Encuentra tu aroma</title>
+  <link rel="icon" type="image/png" href="assets/logo.png" />
+  <link rel="apple-touch-icon" href="assets/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
@@ -18,13 +20,30 @@
     html, body { background: #FFFFFF; margin: 0; padding: 0; min-height: 100vh; font-family: "Geist", system-ui, sans-serif; }
     #root { min-height: 100vh; }
     .__boot {
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
       color: #6B7480; font-weight: 500;
-      font-size: 14px; letter-spacing: -0.01em;
-      gap: 10px;
+      gap: 18px;
     }
-    .__boot::before {
-      content: ""; width: 10px; height: 10px; border-radius: 50%;
+    .__boot img {
+      width: 110px; height: auto; display: block;
+      opacity: 0.95;
+      animation: __bootbreathe 2.6s ease-in-out infinite;
+    }
+    .__boot .__bw {
+      font-family: "Playfair Display", Georgia, serif;
+      font-size: 26px; font-weight: 500; color: #0B0F19;
+      letter-spacing: -0.005em;
+      margin-top: -6px;
+    }
+    .__boot .__bw em { font-style: italic; color: #1B4D6E; }
+    .__boot span {
+      display: inline-flex; align-items: center; gap: 10px;
+      font-size: 11.5px; letter-spacing: 0.16em; text-transform: uppercase;
+      color: #6B7480;
+    }
+    .__boot span::before {
+      content: ""; width: 7px; height: 7px; border-radius: 50%;
       background: #4FB5E8; box-shadow: 0 0 0 4px rgba(79,181,232,0.18);
       animation: __bootping 1.8s infinite;
     }
@@ -33,11 +52,19 @@
       70% { box-shadow: 0 0 0 9px rgba(79,181,232,0); }
       100% { box-shadow: 0 0 0 0 rgba(79,181,232,0); }
     }
+    @keyframes __bootbreathe {
+      0%, 100% { opacity: 0.7; transform: scale(0.98); }
+      50%      { opacity: 1;   transform: scale(1); }
+    }
   </style>
 </head>
 <body>
 <div id="root">
-  <div class="__boot">topnote · cargando…</div>
+  <div class="__boot">
+    <img src="assets/logo.png" alt="" aria-hidden="true" />
+    <div class="__bw">Top <em>Note</em></div>
+    <span>cargando</span>
+  </div>
 </div>
 
 <script>
@@ -177,8 +204,14 @@ const { useState, useEffect, useRef, useMemo } = React;
    ============================================================ */
 const FM = (typeof window !== 'undefined') ? window.Motion : null;
 const motion = FM && FM.motion;
+const AnimatePresence = FM && FM.AnimatePresence;
+const useScroll = FM && FM.useScroll;
+const useSpring = FM && FM.useSpring;
+const useTransform = FM && FM.useTransform;
+const useMotionValue = FM && FM.useMotionValue;
 
 const EASE_CINE = [0.22, 1, 0.36, 1];  // ease "expo.out" — cinemático
+const EASE_SOFT = [0.16, 1, 0.3, 1];   // ease aún más largo — entradas suaves
 
 /** Aparece desde abajo con fade. Úsalo para envolver un bloque. */
 function Reveal({ children, delay = 0, y = 60, duration = 1.1, once = true, className, style }) {
@@ -247,6 +280,131 @@ function MotionCard({ children, onClick, className, delay = 0, index = 0 }) {
   );
 }
 
+/** Barra de progreso de scroll fija arriba — refuerza la sensación cinemática. */
+function ScrollProgress() {
+  if (!motion || !useScroll || !useSpring) return null;
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 120, damping: 26, mass: 0.4 });
+  return (
+    <motion.div
+      style={{
+        position: 'fixed', top: 0, left: 0, right: 0, height: 2, zIndex: 200,
+        background: 'linear-gradient(90deg, #4FB5E8 0%, #7CC9F0 50%, #4FB5E8 100%)',
+        transformOrigin: '0% 50%',
+        scaleX,
+        pointerEvents: 'none',
+      }}
+    />
+  );
+}
+
+/** Título con stagger palabra-a-palabra. Acepta children con texto y un <em>. */
+function WordStaggerTitle({ children, delay = 0, className }) {
+  if (!motion) return <h1 className={className}>{children}</h1>;
+  const segs = [];
+  React.Children.forEach(children, (child) => {
+    if (typeof child === 'string') {
+      const parts = child.split(/(\s+)/);
+      for (const part of parts) {
+        if (!part) continue;
+        if (/^\s+$/.test(part)) {
+          segs.push({ type: 'space', text: part });
+        } else {
+          segs.push({ type: 'word', text: part, em: false });
+        }
+      }
+    } else if (React.isValidElement(child)) {
+      const txt = (child.props && child.props.children) || '';
+      const tag = child.type;
+      const words = String(txt).split(/(\s+)/);
+      for (const w of words) {
+        if (!w) continue;
+        if (/^\s+$/.test(w)) segs.push({ type: 'space', text: w });
+        else segs.push({ type: 'word', text: w, em: tag === 'em' });
+      }
+    }
+  });
+
+  const wordVariants = {
+    hidden:  { opacity: 0, y: 60, filter: 'blur(8px)' },
+    visible: { opacity: 1, y: 0, filter: 'blur(0px)',
+               transition: { duration: 0.95, ease: EASE_SOFT } },
+  };
+
+  return (
+    <motion.h1
+      className={className}
+      initial="hidden"
+      animate="visible"
+      transition={{ staggerChildren: 0.08, delayChildren: delay }}
+      style={{ display: 'block' }}
+    >
+      {segs.map((s, i) => {
+        if (s.type === 'space') return <span key={i}>{s.text}</span>;
+        return (
+          <span key={i} style={{ display: 'inline-block', overflow: 'hidden', verticalAlign: 'top' }}>
+            <motion.span
+              variants={wordVariants}
+              style={{ display: 'inline-block', willChange: 'transform, opacity, filter' }}
+              className={s.em ? 'tn-em-anim' : ''}
+            >
+              {s.em ? <em>{s.text}</em> : s.text}
+            </motion.span>
+          </span>
+        );
+      })}
+    </motion.h1>
+  );
+}
+
+/** Wrapper de transición entre vistas. Fade + leve traslación vertical. */
+function ViewSwitch({ viewKey, children }) {
+  if (!motion || !AnimatePresence) {
+    return <div key={viewKey}>{children}</div>;
+  }
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={viewKey}
+        initial={{ opacity: 0, y: 18 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -10 }}
+        transition={{ duration: 0.55, ease: EASE_CINE }}
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+/** Tilt 3D suave siguiendo el cursor — usado para realzar las tarjetas. */
+function useTilt(strength = 8) {
+  if (!motion || !useMotionValue || !useSpring || !useTransform) {
+    return { ref: null, style: {} };
+  }
+  const ref = useRef(null);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const xs = useSpring(x, { stiffness: 180, damping: 18, mass: 0.4 });
+  const ys = useSpring(y, { stiffness: 180, damping: 18, mass: 0.4 });
+  const rotateX = useTransform(ys, [-0.5, 0.5], [strength, -strength]);
+  const rotateY = useTransform(xs, [-0.5, 0.5], [-strength, strength]);
+
+  const onMove = (e) => {
+    const el = ref.current; if (!el) return;
+    const r = el.getBoundingClientRect();
+    x.set((e.clientX - r.left) / r.width - 0.5);
+    y.set((e.clientY - r.top) / r.height - 0.5);
+  };
+  const onLeave = () => { x.set(0); y.set(0); };
+
+  return {
+    ref,
+    handlers: { onMouseMove: onMove, onMouseLeave: onLeave },
+    style: { rotateX, rotateY, transformPerspective: 1200 },
+  };
+}
+
 /* === ICONOS principales (los que el código de App utiliza) === */
 const __ic = (paths, p) => (
   <svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24"
@@ -294,7 +452,12 @@ const FAMILIA_OPTIONS = ['amaderada', 'oriental', 'floral', 'cítrica', 'gourman
 const STORAGE_KEYS = {
   FAVORITES: 'topnote.favorites.v1',
   HISTORY: 'topnote.history.v1',
+  JWT: 'topnote.jwt.v1',
+  CURRENT_USER: 'topnote.current_user.v1',
 };
+
+/* Base del API NestJS. Si cambias el puerto del back, actualízalo aquí. */
+const API_BASE = 'http://localhost:3000/api';
 
 const FAMILIA_LABELS = {
   amaderada: 'Amaderada',
@@ -345,28 +508,330 @@ async function saveStorage(key, value) {
 }
 
 /* ============================================================
+   API CLIENT — habla con el backend NestJS (server/).
+   ============================================================ */
+function avatarGradient(seed) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const h1 = h % 360;
+  const h2 = (h1 + 28) % 360;
+  return `linear-gradient(135deg, hsl(${h1} 38% 28%) 0%, hsl(${h2} 45% 18%) 100%)`;
+}
+
+function getToken() { return localStorage.getItem(STORAGE_KEYS.JWT); }
+function setToken(t) {
+  if (t) localStorage.setItem(STORAGE_KEYS.JWT, t);
+  else localStorage.removeItem(STORAGE_KEYS.JWT);
+}
+
+class ApiError extends Error {
+  constructor(message, status, code) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function api(path, { method = 'GET', body, auth = true } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth) {
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    throw new ApiError(
+      'No se ha podido contactar con el servidor. ¿Está arrancado en :3000?',
+      0, 'network',
+    );
+  }
+  if (res.status === 204) return null;
+  let data = null;
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    try { data = await res.json(); } catch { /* */ }
+  }
+  if (!res.ok) {
+    const msg = (data && (data.message || data.error))
+      || `Error ${res.status}`;
+    throw new ApiError(
+      Array.isArray(msg) ? msg.join('. ') : msg,
+      res.status,
+      data && data.code,
+    );
+  }
+  return data;
+}
+
+async function signupAccount({ name, email, password, gender }) {
+  const data = await api('/auth/signup', {
+    method: 'POST',
+    body: { name, email, password, gender: gender ?? null },
+    auth: false,
+  });
+  setToken(data.token);
+  return data.user;
+}
+async function loginAccount({ email, password }) {
+  const data = await api('/auth/login', {
+    method: 'POST',
+    body: { email, password },
+    auth: false,
+  });
+  setToken(data.token);
+  return data.user;
+}
+async function fetchCurrentUser() {
+  if (!getToken()) return null;
+  try {
+    return await api('/auth/me');
+  } catch (err) {
+    if (err.status === 401) setToken(null);
+    return null;
+  }
+}
+async function apiUpdateProfile(patch) {
+  return api('/auth/me', { method: 'PATCH', body: patch });
+}
+async function apiDeleteAccount(password) {
+  return api('/auth/account', { method: 'DELETE', body: { password } });
+}
+async function logoutAccount() {
+  setToken(null);
+}
+
+/* === Favorites === */
+async function apiFavoritesList()             { const d = await api('/favorites'); return d.ids || []; }
+async function apiFavoritesAdd(perfumeId)     { return api('/favorites', { method: 'POST', body: { perfumeId } }); }
+async function apiFavoritesRemove(perfumeId)  {
+  return api(`/favorites/${encodeURIComponent(perfumeId)}`, { method: 'DELETE' });
+}
+async function apiFavoritesBulk(perfumeIds) {
+  const d = await api('/favorites/bulk', { method: 'POST', body: { perfumeIds } });
+  return { inserted: d.inserted || 0, ids: d.ids || [] };
+}
+
+/* === History === */
+async function apiHistoryList()               { const d = await api('/history?limit=10'); return d.entries || []; }
+async function apiHistoryAdd(query, filters)  {
+  const d = await api('/history', { method: 'POST', body: { query, filters: filters || undefined } });
+  return d.entry;
+}
+async function apiHistoryClear()              { return api('/history', { method: 'DELETE' }); }
+async function apiHistoryBulk(entries) {
+  const d = await api('/history/bulk', { method: 'POST', body: { entries } });
+  return { inserted: d.inserted || 0, entries: d.entries || [] };
+}
+
+/* === Recommendations (ranking con Claude) === */
+async function apiRankLLM(query, filters, candidates) {
+  const compact = candidates.map((p) => ({
+    id: p.id,
+    nombre: p.nombre,
+    casa: p.casa,
+    ano: p['año'] ?? p.ano,
+    notas: p.notas,
+    familia: p.familia,
+    acordes: p.acordes,
+    temporada: p.temporada,
+    genero: p.genero,
+    rating: p.rating,
+    rating_count: p.rating_count,
+    similares_a: p.similares_a,
+  }));
+  const d = await api('/recommendations/rank', {
+    method: 'POST',
+    body: { query, filters: filters || undefined, candidates: compact },
+    auth: false,
+  });
+  return d.results || [];
+}
+
+/* ============================================================
    PREFILTRO CLIENT-SIDE
    ============================================================
-   Con ~20k perfumes no podemos enviar todo al LLM. Pre-seleccionamos
-   candidatos por:
+   Con ~30k perfumes no podemos enviar todo al LLM. Pre-seleccionamos
+   candidatos en cuatro fases:
      1. Filtros duros del UI (familia, género, temporada).
-     2. Score textual contra notas/casa/familia/acordes desde el query.
-     3. Prior de calidad (rating × log(1+votos)).
-   Devolvemos top N (LLM_CANDIDATE_CAP) al perfumista para re-ranking. */
+     2. Detección de perfumes mencionados ("como Sauvage") — sus acordes
+        y notas pasan a ser keywords objetivo (excluyendo el propio).
+     3. Expansión semántica ES→acordes vía QUERY_CONCEPTS:
+        "oficina"→fresh/clean/citrus, "dulce"→sweet/vanilla/gourmand, etc.
+     4. Score ponderado: literal (1.5) + expandido (2.0) + prior calidad (0.04).
+     5. Diversificación por casa, cap por LLM_CANDIDATE_CAP.
+   ============================================================ */
 const STOPWORDS_ES = new Set([
   'de','la','el','los','las','un','una','unos','unas','y','o','con','sin','para',
-  'que','como','algo','en','por','del','al','su','sus','muy','más','menos','pero',
+  'que','como','algo','en','por','del','al','su','sus','muy','mas','menos','pero',
   'me','mi','tu','lo','le','les','este','esta','estos','estas','ese','esa','esos',
   'esas','quiero','busco','dame','necesito','similar','similares','parecido','perfume',
-  'perfumes','fragancia','fragancias','aroma','colonia','olor',
+  'perfumes','fragancia','fragancias','aroma','colonia','olor','algun','alguna',
+  'tipo','estilo','manera','forma','clase','ser','tener','quiere','quieres',
 ]);
 
+/* Diccionario semántico: ocasión / mood / nota en español → acordes y notas
+   (en inglés y español sin diacríticos, tal como aparecen en el blob). */
+const QUERY_CONCEPTS = {
+  // Ocasión / contexto
+  'oficina':     ['fresh','clean','citrus','aromatic','soft','musky','linen','wood'],
+  'trabajo':     ['fresh','clean','citrus','aromatic','soft'],
+  'cita':        ['sweet','floral','soft','powdery','sensual','vanilla','rose'],
+  'noche':       ['amber','oud','oriental','intense','smoky','sensual','warm','leather'],
+  'cena':        ['oriental','amber','warm','sensual','wood','leather'],
+  'casual':      ['fresh','citrus','light','aromatic','clean'],
+  'diario':      ['fresh','clean','citrus','aromatic','light'],
+  'evento':      ['intense','oud','oriental','leather','smoky','amber'],
+  'fiesta':      ['sweet','gourmand','intense','sensual','warm'],
+  'gym':         ['fresh','aquatic','citrus','sport'],
+  'deporte':     ['fresh','aquatic','citrus','sport','aromatic'],
+  'playa':       ['fresh','aquatic','marine','citrus','coconut','tropical'],
+  'verano':      ['fresh','aquatic','citrus','green','marine','cologne','tropical'],
+  'invierno':    ['amber','gourmand','woody','spicy','smoky','warm','sweet','oud'],
+  'primavera':   ['floral','green','citrus','fresh','soft','rose','jasmine'],
+  'otono':       ['woody','amber','spicy','leather','tobacco','warm'],
+
+  // Mood / estilo
+  'dulce':       ['sweet','gourmand','vanilla','caramel','honey','sugar'],
+  'fresco':      ['fresh','citrus','aquatic','green','marine','aromatic'],
+  'elegante':    ['woody','iris','leather','amber','refined','aldehydic'],
+  'sofisticado': ['woody','iris','leather','amber','smoky','refined'],
+  'discreto':    ['soft','powdery','clean','light','musky'],
+  'suave':       ['soft','powdery','floral','clean','musky','vanilla'],
+  'intenso':     ['intense','amber','oud','oriental','smoky','leather'],
+  'fuerte':      ['intense','strong','amber','oud','smoky','spicy'],
+  'profundo':    ['amber','oud','woody','smoky','dark','intense'],
+  'sensual':     ['amber','vanilla','oud','musky','warm','sweet','rose'],
+  'limpio':      ['clean','soap','musky','aldehydic','fresh'],
+  'aromatico':   ['aromatic','herbal','green','lavender'],
+  'amargo':      ['bitter','tobacco','green'],
+  'citrico':     ['citrus','fresh','aromatic','bergamot','lemon','orange'],
+  'amaderado':   ['woody','sandalwood','cedar','vetiver','oud'],
+  'maduro':      ['leather','tobacco','amber','oud','woody','rum'],
+  'juvenil':     ['fresh','citrus','sweet','aquatic','sport'],
+  'masculino':   ['woody','leather','tobacco','aromatic','spicy','animalic'],
+  'femenino':    ['floral','sweet','powdery','rose','jasmine','tuberose'],
+  'caliente':    ['warm','amber','spicy','oud'],
+  'calido':      ['warm','amber','spicy','oud','vanilla','tobacco'],
+  'frio':        ['fresh','aquatic','mint','cold','marine'],
+  'romantico':   ['floral','rose','sweet','sensual','powdery','vanilla'],
+  'misterioso':  ['oud','smoky','dark','incense','leather','amber','intense'],
+  'gourmand':    ['gourmand','sweet','vanilla','caramel','chocolate','honey'],
+  'oriental':    ['amber','oriental','spicy','resin','incense'],
+  'animal':      ['musk','civet','leather','animalic'],
+  'humo':        ['smoky','smoke','incense','tobacco'],
+
+  // Notas/acordes en ES → EN (los acordes Parfumo están en inglés)
+  'vainilla':   ['vanilla'],
+  'rosa':       ['rose'],
+  'jazmin':     ['jasmine'],
+  'sandalo':    ['sandalwood'],
+  'cedro':      ['cedar'],
+  'oud':        ['oud','agarwood'],
+  'tabaco':     ['tobacco'],
+  'cuero':      ['leather'],
+  'incienso':   ['incense','frankincense'],
+  'ambar':      ['amber'],
+  'cafe':       ['coffee'],
+  'cacao':      ['chocolate','cacao'],
+  'chocolate':  ['chocolate','cacao'],
+  'naranja':    ['orange','neroli'],
+  'limon':      ['lemon'],
+  'bergamota':  ['bergamot'],
+  'lavanda':    ['lavender'],
+  'menta':      ['mint','peppermint'],
+  'pimienta':   ['pepper'],
+  'azafran':    ['saffron'],
+  'almizcle':   ['musk'],
+  'caramelo':   ['caramel','toffee'],
+  'miel':       ['honey'],
+  'frutal':     ['fruity','peach','apple','pear'],
+  'verde':      ['green','grass','leaf'],
+  'especiado':  ['spicy','pepper','cinnamon','cardamom','saffron','clove'],
+  'pachuli':    ['patchouli'],
+  'patchouli':  ['patchouli'],
+  'sandia':     ['watermelon'],
+  'higo':       ['fig'],
+  'iris':       ['iris','orris'],
+  'mirra':      ['myrrh'],
+  'rum':        ['rum'],
+  'ron':        ['rum'],
+  'durazno':    ['peach'],
+  'melocoton':  ['peach'],
+  'fresa':      ['strawberry'],
+  'frambuesa':  ['raspberry'],
+  'mora':       ['blackberry'],
+  'coco':       ['coconut'],
+  'tonka':      ['tonka'],
+  'almendra':   ['almond'],
+  'cardamomo':  ['cardamom'],
+  'canela':     ['cinnamon'],
+};
+
+const NORM = (s) => String(s || '').toLowerCase()
+  .normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+/* Alias de marcas (cortas o coloquiales) → nombre completo como aparece en la
+   columna casa del catálogo. Cuando el usuario escribe "YSL" o "TF", queremos
+   tratarlo como "yves saint laurent" / "tom ford". */
+const BRAND_ALIASES = {
+  'ysl': 'yves saint laurent',
+  'tf':  'tom ford',
+  'ga':  'giorgio armani',
+  'ck':  'calvin klein',
+  'jpg': 'jean paul gaultier',
+  'mfk': 'maison francis kurkdjian',
+  'pdm': 'parfums de marly',
+  'dg':  'dolce gabbana',
+  'cdg': 'comme des garcons',
+  'lv':  'louis vuitton',
+  'mb':  'montblanc',
+  'bvl': 'bvlgari',
+  // Apellidos / palabras sueltas que apuntan a casa concreta
+  'armani':     'giorgio armani',
+  'kurkdjian':  'maison francis kurkdjian',
+  'marly':      'parfums de marly',
+  'vuitton':    'louis vuitton',
+  'rabanne':    'paco rabanne',
+  'paco':       'paco rabanne',
+  'mugler':     'thierry mugler',
+  'tom ford':   'tom ford',
+  'rodriguez':  'narciso rodriguez',
+  'narciso':    'narciso rodriguez',
+  'penhaligon': 'penhaligons',
+  'penhaligons':'penhaligons',
+};
+
+/* Aplica alias de marcas sobre la query normalizada. Reemplaza palabra completa. */
+function expandBrandAliases(qNorm) {
+  let out = qNorm;
+  for (const [alias, full] of Object.entries(BRAND_ALIASES)) {
+    if (alias === full) continue;
+    const re = new RegExp(`(^|[^a-z0-9])${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'g');
+    out = out.replace(re, (_m, pre, post) => `${pre}${full}${post}`);
+  }
+  return out;
+}
+
 function tokenizeQuery(q) {
-  return (q || '')
-    .toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')   // sin tildes para matcheo más permisivo
+  return NORM(q)
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length >= 3 && !STOPWORDS_ES.has(t));
+}
+
+function expandConcepts(tokens) {
+  const expanded = new Set();
+  for (const t of tokens) {
+    expanded.add(t);
+    const concepts = QUERY_CONCEPTS[t];
+    if (concepts) for (const c of concepts) expanded.add(c);
+  }
+  return expanded;
 }
 
 /* Indexa el blob textual de cada perfume una sola vez tras la carga. */
@@ -381,42 +846,142 @@ function ensureSearchIndex(catalog) {
       ...(p.acordes || []),
       ...(p.perfumistas || []),
     ];
-    p.__blob = parts.join(' ').toLowerCase()
-      .normalize('NFD').replace(/[̀-ͯ]/g, '');
+    p.__blob = NORM(parts.join(' '));
     p.__quality = (p.rating || 0) * Math.log1p(p.rating_count || 0);
   }
   catalog.__indexed = true;
 }
 
-/* Diversificación: cap de candidatos por misma casa para que los resultados
-   no estén dominados por 1-2 marcas con muchos flankers (Dior, Tom Ford…). */
+/* Index "ligero" de nombres conocidos: top 400 por calidad. La query se
+   escanea como substring contra estos nombres normalizados. */
+let __famousIndex = null;
+function ensureFamousIndex(catalog) {
+  if (__famousIndex) return __famousIndex;
+  ensureSearchIndex(catalog);
+  __famousIndex = catalog
+    .slice()
+    .sort((a, b) => (b.__quality || 0) - (a.__quality || 0))
+    .slice(0, 400)
+    .map((p) => ({ p, nameNorm: NORM(p.nombre) }))
+    .filter((x) => x.nameNorm.length >= 4);
+  return __famousIndex;
+}
+
+function detectMentionedPerfumes(query, catalog) {
+  const qRaw = NORM(query);
+  if (qRaw.length < 4) return [];
+  // Expandimos alias de marca (ysl→yves saint laurent) tanto para el match
+  // por nombre conocido como para el pattern-based detector.
+  const q = expandBrandAliases(qRaw);
+  const idx = ensureFamousIndex(catalog);
+  const matched = [];
+  const seen = new Set();
+
+  // 1) Substring match contra nombres famosos (top 400 por calidad).
+  for (const { p, nameNorm } of idx) {
+    if (seen.has(p.id)) continue;
+    const re = new RegExp(`(^|[^a-z0-9])${nameNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`);
+    if (re.test(q)) {
+      matched.push(p); seen.add(p.id);
+      if (matched.length >= 5) break;
+    }
+  }
+
+  // 2) Pattern "NAME de BRAND" / "NAME by BRAND" / "BRAND NAME"
+  //    Captura nombres cortos (1-3 chars) que el famous index no detecta:
+  //    "Y de YSL", "M de Mancera", etc.
+  const patterns = [
+    /(?:^|[^a-z0-9])([a-z0-9]{1,12})\s+(?:de|by|of)\s+([a-z][a-z\s]{2,30})/g,
+  ];
+  for (const re of patterns) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(q)) !== null) {
+      const nameQ  = m[1].trim();
+      const brandQ = m[2].trim().split(/\s+/).slice(0, 4).join(' '); // top 4 palabras
+      if (!nameQ || !brandQ || STOPWORDS_ES.has(nameQ)) continue;
+      // Encuentra perfumes cuya casa contenga el brand AND su nombre sea
+      // exactamente nameQ o empiece por "nameQ ".
+      const cands = catalog.filter((p) => {
+        const casaN = NORM(p.casa);
+        const nomN  = NORM(p.nombre);
+        const brandMatch = casaN.includes(brandQ) || brandQ.includes(casaN);
+        if (!brandMatch) return false;
+        return nomN === nameQ || nomN.startsWith(nameQ + ' ');
+      });
+      cands.sort((a, b) => (b.__quality || 0) - (a.__quality || 0));
+      // Sin cap: queremos excluir TODAS las variantes del mismo perfume
+      // (Eau de Parfum, Eau de Toilette, Le Parfum, 1964, 2023, etc.).
+      for (const p of cands) {
+        if (!seen.has(p.id)) { matched.push(p); seen.add(p.id); }
+      }
+    }
+  }
+
+  return matched.slice(0, 20);
+}
+
 const MAX_PER_CASA = 3;
 
 function prefilter(query, filters, catalog, cap = LLM_CANDIDATE_CAP) {
   ensureSearchIndex(catalog);
-  const tokens = tokenizeQuery(query);
+  const baseTokens = tokenizeQuery(query);
+  const expandedSet = expandConcepts(baseTokens);
+
+  // Alias de marca: "ysl" añade "yves saint laurent" como keyword.
+  // Aplicamos al query normalizado y extraemos las "nuevas" palabras como
+  // tokens objetivo (multi-palabra → substring match contra el blob).
+  const qExpanded = expandBrandAliases(NORM(query));
+  for (const alias in BRAND_ALIASES) {
+    const full = BRAND_ALIASES[alias];
+    // Si la query contiene el alias (como palabra) o el full name, añade full al set.
+    const reAlias = new RegExp(`(^|[^a-z0-9])${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`);
+    if (reAlias.test(NORM(query)) || qExpanded.includes(full)) {
+      expandedSet.add(full);
+    }
+  }
+
+  // Perfumes mencionados: sus acordes y notas pasan al set de keywords
+  // (en su versión normalizada). Sus IDs se excluyen del pool de candidatos
+  // (el usuario quiere "como X", no X otra vez).
+  const mentioned = detectMentionedPerfumes(query, catalog);
+  const excludeIds = new Set();
+  for (const ref of mentioned) {
+    excludeIds.add(ref.id);
+    for (const a of (ref.acordes || []))         expandedSet.add(NORM(a));
+    for (const n of (ref.notas?.salida || []))   expandedSet.add(NORM(n));
+    for (const n of (ref.notas?.corazon || []))  expandedSet.add(NORM(n));
+    for (const n of (ref.notas?.fondo || []))    expandedSet.add(NORM(n));
+    if (ref.familia) expandedSet.add(NORM(ref.familia));
+  }
+  const expandedArr = Array.from(expandedSet).filter((k) => k.length >= 3);
+
+  // Modulador: "menos común", "poco común", "raro", "nicho" → invierte el prior
+  // de calidad para favorecer perfumes menos populares.
+  const lessCommon = /poco\s*com[uú]n|menos\s*com[uú]n|no\s*com[uú]n|raro|nicho|niche/i.test(query || '');
 
   let pool = catalog;
   if (filters?.familia) pool = pool.filter((p) => p.familia === filters.familia);
   if (filters?.gender)  pool = pool.filter((p) => p.genero === filters.gender || p.genero === 'unisex');
   if (filters?.season)  pool = pool.filter((p) => (p.temporada || []).includes(filters.season));
-
-  // Si los filtros vacían el pool, retrocedemos a catalog sin filtros para no romper la búsqueda.
   if (pool.length === 0) pool = catalog;
+  if (excludeIds.size)  pool = pool.filter((p) => !excludeIds.has(p.id));
 
   const scored = new Array(pool.length);
   for (let i = 0; i < pool.length; i++) {
     const p = pool[i];
     let s = 0;
-    if (tokens.length) {
-      for (const t of tokens) if (p.__blob.indexOf(t) !== -1) s += 1;
+    // Literal: lo que el usuario escribió tal cual (peso 1.5).
+    if (baseTokens.length) {
+      for (const t of baseTokens) if (p.__blob.indexOf(t) !== -1) s += 1.5;
     }
-    // Prior de calidad reducido: rating × log(votos), pero con peso bajo para
-    // que un match textual fuerte mande sobre la popularidad bruta.
-    s += 0.01 * p.__quality;
-    // Pequeño jitter (≤0.5) para romper empates de forma no determinista
-    // y aportar variedad entre consultas similares.
-    s += Math.random() * 0.5;
+    // Expandido (concepto + perfumes referenciados): peso 2.0 — más semántico.
+    for (const k of expandedArr) {
+      if (p.__blob.indexOf(k) !== -1) s += 2.0;
+    }
+    // Prior de calidad — peso medio, invertible si "poco común".
+    const qPrior = 0.04 * (p.__quality || 0);
+    s += lessCommon ? -qPrior * 0.5 : qPrior;
     scored[i] = [s, p];
   }
   scored.sort((a, b) => b[0] - a[0]);
@@ -439,107 +1004,26 @@ function prefilter(query, filters, catalog, cap = LLM_CANDIDATE_CAP) {
    LLAMADA A LA IA
    ============================================================ */
 async function getRecommendations(query, filters, catalog) {
+  // 1) Prefilter local por keywords (notas, casa, familia, acordes) + prior de calidad.
   const candidates = prefilter(query, filters, catalog, LLM_CANDIDATE_CAP);
   if (candidates.length === 0) {
     throw new Error('No hay candidatos tras el prefiltro. Afloja los filtros o reformula.');
   }
 
-  const compact = candidates.map((p) => ({
-    id: p.id,
-    nombre: p.nombre,
-    casa: p.casa,
-    año: p.año,
-    notas: p.notas,
-    familia: p.familia,
-    acordes: p.acordes,
-    temporada: p.temporada,
-    genero: p.genero,
-    rating: p.rating,
-    rating_count: p.rating_count,
-    similares_a: p.similares_a,
-  }));
-
-  const prompt = `Eres un experto perfumista profesional. Analiza la petición del usuario y el subconjunto de fragancias pre-filtrado, y devuelve EXCLUSIVAMENTE un array JSON con las 3 a 5 fragancias más relevantes, ordenadas de mayor a menor relevancia.
-
-Cada elemento del array debe tener exactamente este formato:
-{ "id": "<id_exacto_del_catalogo>", "score": <numero_0_100>, "reasoning": "<2-3 frases en español natural explicando por qué encaja con la petición concreta>" }
-
-Reglas:
-- Considera notas olfativas, familia, temporada, género y referencias a otros perfumes (campo similares_a).
-- Si el usuario menciona un perfume conocido, prioriza los que tengan notas/familia equivalente o aparezcan en similares_a.
-- El campo rating (0-10) y rating_count (votos) reflejan recepción del público; úsalos como prior secundario, NUNCA como criterio principal.
-- Respeta los filtros (estación, género, familia) cuando estén indicados.
-- El reasoning debe ser específico y mencionar notas o aspectos concretos de ese perfume que justifican el match. Nada genérico.
-- Responde SOLO el array JSON. Sin markdown, sin bloques de código, sin texto introductorio.
-
-PETICIÓN DEL USUARIO:
-"${query}"
-
-FILTROS APLICADOS:
-${JSON.stringify(filters)}
-
-CANDIDATOS (${compact.length} de ${catalog.length} en catálogo):
-${JSON.stringify(compact)}`;
-
-  // Schema explícito para que Gemini devuelva un array bien formado.
-  // Gemini espera tipos en MAYÚSCULAS (enum Type de la API).
-  const responseSchema = {
-    type: 'ARRAY',
-    items: {
-      type: 'OBJECT',
-      properties: {
-        id: { type: 'STRING' },
-        score: { type: 'INTEGER' },
-        reasoning: { type: 'STRING' }
-      },
-      required: ['id', 'score', 'reasoning']
-    }
-  };
-  const raw = await window.claude.complete(prompt, { responseSchema, maxOutputTokens: 8192 });
-
-  let cleaned = String(raw).trim();
-  // limpia fences ```json ... ``` por si acaso
-  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
-  // si hay texto antes/después, intenta extraer el array
-  const m = cleaned.match(/\[[\s\S]*\]/);
-  if (m) cleaned = m[0];
-
-  let parsed;
+  // 2) Ranking + razonamiento con Claude (vía backend).
+  //    El backend formatea el prompt, parsea el JSON y devuelve resultados ya limpios.
   try {
-    parsed = JSON.parse(cleaned);
-  } catch (e) {
-    console.error('[LLM] Fallo al parsear JSON. Respuesta cruda:', raw);
-    // Fallback: si el JSON fue truncado mid-array, reparamos cerrando el array
-    // tras el último objeto bien formado.
-    try {
-      const lastClose = cleaned.lastIndexOf('}');
-      if (lastClose > 0) {
-        const repaired = cleaned.slice(0, lastClose + 1) + ']';
-        parsed = JSON.parse(repaired);
-        console.warn('[LLM] JSON truncado — reparado con', Array.isArray(parsed) ? parsed.length : '?', 'recomendaciones.');
-      } else {
-        throw e;
-      }
-    } catch (e2) {
-      throw new Error('La respuesta del perfumista venía truncada. Reintente la consulta.');
+    const ranked = await apiRankLLM(query, filters, candidates);
+    if (!ranked.length) {
+      throw new Error('El perfumista no ha devuelto recomendaciones. Reformula la consulta.');
     }
+    return ranked; // [{ id, score, reasoning }, ...]
+  } catch (e) {
+    if (e && e.code === 'network') {
+      throw new Error('No se ha podido contactar con el perfumista. Comprueba que el servidor esté arrancado.');
+    }
+    throw new Error(e.message || 'El perfumista no ha podido responder.');
   }
-  // Gemini con responseSchema puede envolver el array en {results: [...]}
-  // o {recommendations: [...]} — desempaquetamos si hace falta.
-  if (!Array.isArray(parsed) && parsed && typeof parsed === 'object') {
-    const arrField = Object.values(parsed).find((v) => Array.isArray(v));
-    if (arrField) parsed = arrField;
-  }
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    console.error('[LLM] Respuesta no contiene array. Cruda:', raw);
-    throw new Error('El perfumista no ha devuelto recomendaciones. Reformule la consulta.');
-  }
-  // filtra resultados con id válido (debe estar en el catálogo)
-  const valid = parsed.filter((r) => r && r.id && CATALOG.some((p) => p.id === r.id));
-  if (valid.length === 0) {
-    throw new Error('Las recomendaciones no coinciden con el catálogo. Reintente.');
-  }
-  return valid.slice(0, 5);
 }
 
 /* ============================================================
@@ -572,6 +1056,10 @@ function TopNote() {
   const [history, setHistory] = useState([]);
   const [detail, setDetail] = useState(null); // { perfume, score, reasoning }
   const [showFilters, setShowFilters] = useState(false);
+  const [user, setUser] = useState(null);          // sesión activa o null
+  const [authView, setAuthView] = useState(null);  // 'login' | 'signup' | null
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileMode, setProfileMode] = useState(null); // 'edit' | 'delete' | null
 
   // Carga del catálogo Parfumo
   const [catalogState, setCatalogState] = useState({ status: 'loading', error: null, count: 0 });
@@ -602,12 +1090,105 @@ function TopNote() {
 
   useEffect(() => {
     (async () => {
-      const f = await loadStorage(STORAGE_KEYS.FAVORITES, []);
-      const h = await loadStorage(STORAGE_KEYS.HISTORY, []);
-      setFavorites(f);
-      setHistory(h);
+      // 1) Carga local (siempre, así la UI no se vacía al recargar offline).
+      const localFavs = await loadStorage(STORAGE_KEYS.FAVORITES, []);
+      const localHist = await loadStorage(STORAGE_KEYS.HISTORY, []);
+      setFavorites(localFavs);
+      setHistory(localHist);
+
+      // 2) Si hay token guardado, intenta hidratar usuario y datos del servidor.
+      const session = await fetchCurrentUser();
+      if (!session) return;
+      setUser(session);
+      try {
+        const [favs, hist] = await Promise.all([
+          apiFavoritesList(),
+          apiHistoryList(),
+        ]);
+        setFavorites(favs);
+        setHistory(hist);
+        await saveStorage(STORAGE_KEYS.FAVORITES, favs);
+        await saveStorage(STORAGE_KEYS.HISTORY, hist);
+      } catch (e) {
+        /* si falla la red, nos quedamos con los locales */
+      }
     })();
   }, []);
+
+  // Cierra modal de auth, dropdown del perfil y submodales con ESC
+  useEffect(() => {
+    if (!authView && !profileOpen && !profileMode) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setAuthView(null); setProfileOpen(false); setProfileMode(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [authView, profileOpen, profileMode]);
+
+  const onAuthSuccess = async (session, mode) => {
+    setUser(session);
+    setAuthView(null);
+    try {
+      // Si fue signup y hay datos de invitado en local, los migramos al servidor
+      // antes de leerlos. Si fue login, los del servidor son la verdad.
+      if (mode === 'signup') {
+        const localFavs = await loadStorage(STORAGE_KEYS.FAVORITES, []);
+        const localHist = await loadStorage(STORAGE_KEYS.HISTORY, []);
+
+        if (Array.isArray(localFavs) && localFavs.length) {
+          try { await apiFavoritesBulk(localFavs); } catch (e) { console.warn('bulk favoritos:', e.message); }
+        }
+        if (Array.isArray(localHist) && localHist.length) {
+          // El backend ordena por fecha de inserción; subimos primero el más
+          // antiguo para que el más reciente (índice 0 local) acabe arriba.
+          const ordered = localHist.slice().reverse().map((h) => ({
+            query: h.query, filters: h.filters || undefined,
+          }));
+          try { await apiHistoryBulk(ordered); } catch (e) { console.warn('bulk historial:', e.message); }
+        }
+      }
+
+      const [favs, hist] = await Promise.all([
+        apiFavoritesList(),
+        apiHistoryList(),
+      ]);
+      setFavorites(favs);
+      setHistory(hist);
+      await saveStorage(STORAGE_KEYS.FAVORITES, favs);
+      await saveStorage(STORAGE_KEYS.HISTORY, hist);
+    } catch { /* fallback a locales */ }
+  };
+  const onLogout = async () => {
+    await logoutAccount();
+    setUser(null);
+    setProfileOpen(false);
+    setProfileMode(null);
+    // Limpia favoritos/historial en pantalla: ahora muestran solo lo "local
+    // del invitado" — que es lo último persistido en localStorage.
+    const localFavs = await loadStorage(STORAGE_KEYS.FAVORITES, []);
+    const localHist = await loadStorage(STORAGE_KEYS.HISTORY, []);
+    setFavorites(localFavs);
+    setHistory(localHist);
+  };
+
+  const onProfileUpdated = (updatedUser) => {
+    setUser(updatedUser);
+    setProfileMode(null);
+  };
+
+  const onAccountDeleted = async () => {
+    // Tras borrar la cuenta el servidor invalida todo. Limpia local y vuelve a invitado.
+    setProfileMode(null);
+    setProfileOpen(false);
+    await logoutAccount();
+    setUser(null);
+    setFavorites([]);
+    setHistory([]);
+    await saveStorage(STORAGE_KEYS.FAVORITES, []);
+    await saveStorage(STORAGE_KEYS.HISTORY, []);
+  };
 
   // bloqueo de scroll cuando hay modal
   useEffect(() => {
@@ -627,9 +1208,15 @@ function TopNote() {
   }, [detail]);
 
   async function runQuery(q, f) {
-    const useF = f || filters;
+    const baseF = f || filters;
+    // Filtro implícito: si el usuario tiene gender en su perfil y no hay
+    // gender explícito en la UI, aplicamos su preferencia automáticamente.
+    const useF = {
+      ...baseF,
+      gender: baseF.gender || (user && user.gender) || null,
+    };
     setQuery(q);
-    setFilters(useF);
+    setFilters(baseF);
     setLastQuery(q);
     setLastFilters(useF);
     setLoading(true);
@@ -641,8 +1228,22 @@ function TopNote() {
     try {
       const recs = await getRecommendations(q, useF, CATALOG);
       setResults(recs);
-      const entry = { query: q, filters: useF, timestamp: Date.now() };
-      const newHist = [entry, ...history.filter((h) => h.query !== q)].slice(0, 10);
+
+      // Si hay sesión, persistimos en el servidor (el server ya dedupa).
+      // Tanto si hay sesión como si no, mantenemos copia local.
+      let newHist;
+      if (user) {
+        try {
+          await apiHistoryAdd(q, useF);
+          newHist = await apiHistoryList();
+        } catch {
+          const entry = { query: q, filters: useF, timestamp: Date.now() };
+          newHist = [entry, ...history.filter((h) => h.query !== q)].slice(0, 10);
+        }
+      } else {
+        const entry = { query: q, filters: useF, timestamp: Date.now() };
+        newHist = [entry, ...history.filter((h) => h.query !== q)].slice(0, 10);
+      }
       setHistory(newHist);
       await saveStorage(STORAGE_KEYS.HISTORY, newHist);
     } catch (err) {
@@ -661,9 +1262,22 @@ function TopNote() {
   const onRetry = () => { if (lastQuery) runQuery(lastQuery, lastFilters); };
 
   const toggleFavorite = async (id) => {
-    const newFavs = favorites.includes(id) ? favorites.filter((f) => f !== id) : [...favorites, id];
+    const isFav = favorites.includes(id);
+    const newFavs = isFav ? favorites.filter((f) => f !== id) : [...favorites, id];
     setFavorites(newFavs);
     await saveStorage(STORAGE_KEYS.FAVORITES, newFavs);
+    // Sync con backend si hay sesión. Si falla, revertimos.
+    if (user) {
+      try {
+        if (isFav) await apiFavoritesRemove(id);
+        else       await apiFavoritesAdd(id);
+      } catch (err) {
+        setFavorites(favorites);
+        await saveStorage(STORAGE_KEYS.FAVORITES, favorites);
+        // eslint-disable-next-line no-console
+        console.warn('No se ha podido sincronizar el favorito:', err.message);
+      }
+    }
   };
 
   const onCardOpen = (data) => setDetail(data);
@@ -686,7 +1300,11 @@ function TopNote() {
     return (
       <div style={{ background: 'var(--bg)', color: 'var(--ink)', minHeight: '100vh' }}>
         <ThemeStyles />
-        <div className="__boot" style={{ minHeight: '100vh' }}>topnote · cargando catálogo…</div>
+        <div className="__boot" style={{ minHeight: '100vh' }}>
+          <img src="assets/logo.png" alt="" aria-hidden="true" />
+          <div className="__bw">Top <em>Note</em></div>
+          <span>cargando catálogo</span>
+        </div>
       </div>
     );
   }
@@ -695,7 +1313,9 @@ function TopNote() {
     return (
       <div style={{ background: 'var(--bg)', color: 'var(--ink)', minHeight: '100vh' }}>
         <ThemeStyles />
-        <main className="tn-main" style={{ padding: '120px 40px' }}>
+        <main className="tn-main" style={{ padding: '80px 40px 120px' }}>
+          <img src="assets/logo.png" alt="Top Note"
+               style={{ width: 120, height: 'auto', display: 'block', marginBottom: 24 }} />
           <h1 style={{ fontSize: 36, marginBottom: 16, letterSpacing: '-0.02em' }}>No se ha podido cargar el catálogo</h1>
           <p style={{ color: 'var(--ink-mute)', fontSize: 16, marginBottom: 28, maxWidth: 640 }}>
             {catalogState.error}
@@ -720,76 +1340,129 @@ function TopNote() {
   return (
     <div style={{ background: 'var(--bg)', color: 'var(--ink)', minHeight: '100vh' }}>
       <ThemeStyles />
+      <ScrollProgress />
       <Header
         view={view}
         setView={setView}
         favoritesCount={favorites.length}
         historyCount={history.length}
-        onToggleFilters={() => setShowFilters((s) => !s)}
+        user={user}
+        onAvatarClick={() => {
+          if (user) setProfileOpen((s) => !s);
+          else setAuthView('signup');
+        }}
+        profileOpen={profileOpen}
+        onCloseProfile={() => setProfileOpen(false)}
+        onLogout={onLogout}
+        onSwitchToLogin={() => { setProfileOpen(false); setAuthView('login'); }}
+        onSwitchToSignup={() => { setProfileOpen(false); setAuthView('signup'); }}
+        onEditProfile={() => { setProfileOpen(false); setProfileMode('edit'); }}
+        onDeleteAccount={() => { setProfileOpen(false); setProfileMode('delete'); }}
       />
 
-      {view === 'search' && (
-        <SearchView
-          query={query}
-          setQuery={setQuery}
-          onSubmit={onSubmit}
-          loading={loading}
-          error={error}
-          onRetry={onRetry}
-          filters={filters}
-          setFilters={setFilters}
-          showFilters={showFilters}
-          setShowFilters={setShowFilters}
-          onExample={onPickExample}
-        />
-      )}
+      <ViewSwitch viewKey={view}>
+        {view === 'search' && (
+          <SearchView
+            query={query}
+            setQuery={setQuery}
+            onSubmit={onSubmit}
+            loading={loading}
+            error={error}
+            onRetry={onRetry}
+            filters={filters}
+            setFilters={setFilters}
+            showFilters={showFilters}
+            setShowFilters={setShowFilters}
+            onExample={onPickExample}
+          />
+        )}
 
-      {view === 'results' && (
-        <ResultsView
-          query={lastQuery || query}
-          filters={lastFilters || filters}
-          results={results}
-          loading={loading}
-          error={error}
-          onBack={() => setView('search')}
-          onRetry={onRetry}
-          onCardOpen={onCardOpen}
-          favorites={favorites}
-          toggleFavorite={toggleFavorite}
-        />
-      )}
+        {view === 'results' && (
+          <ResultsView
+            query={lastQuery || query}
+            filters={lastFilters || filters}
+            results={results}
+            loading={loading}
+            error={error}
+            onBack={() => setView('search')}
+            onRetry={onRetry}
+            onCardOpen={onCardOpen}
+            favorites={favorites}
+            toggleFavorite={toggleFavorite}
+          />
+        )}
 
-      {view === 'archive' && (
-        <ArchiveView
-          favorites={favorites}
-          history={history}
-          toggleFavorite={toggleFavorite}
-          onCardOpen={onCardOpen}
-          onRunHistory={onRunHistory}
-          onGoSearch={() => setView('search')}
-        />
-      )}
+        {view === 'archive' && (
+          <ArchiveView
+            favorites={favorites}
+            history={history}
+            toggleFavorite={toggleFavorite}
+            onCardOpen={onCardOpen}
+            onRunHistory={onRunHistory}
+            onGoSearch={() => setView('search')}
+          />
+        )}
 
-      {view === 'catalog' && (
-        <CatalogView
-          favorites={favorites}
-          toggleFavorite={toggleFavorite}
-          onCardOpen={onCardOpen}
-          onGoSearch={() => setView('search')}
-        />
-      )}
+        {view === 'catalog' && (
+          <CatalogView
+            favorites={favorites}
+            toggleFavorite={toggleFavorite}
+            onCardOpen={onCardOpen}
+            onGoSearch={() => setView('search')}
+          />
+        )}
+      </ViewSwitch>
 
-      {detail && (
-        <DetailModal
-          {...detail}
-          isFavorite={favorites.includes(detail.perfume.id)}
-          onToggleFavorite={() => toggleFavorite(detail.perfume.id)}
-          onSimilar={() => onSimilar(detail.perfume)}
-          onClose={onCloseDetail}
-        />
-      )}
+      <AnimatePresenceModal>
+        {detail && (
+          <DetailModal
+            {...detail}
+            isFavorite={favorites.includes(detail.perfume.id)}
+            onToggleFavorite={() => toggleFavorite(detail.perfume.id)}
+            onSimilar={() => onSimilar(detail.perfume)}
+            onClose={onCloseDetail}
+          />
+        )}
+      </AnimatePresenceModal>
+
+      <AnimatePresenceModal>
+        {authView && (
+          <AuthModal
+            mode={authView}
+            setMode={setAuthView}
+            onSuccess={onAuthSuccess}
+            onClose={() => setAuthView(null)}
+          />
+        )}
+      </AnimatePresenceModal>
+
+      <AnimatePresenceModal>
+        {user && profileMode === 'edit' && (
+          <EditProfileModal
+            user={user}
+            onSaved={onProfileUpdated}
+            onClose={() => setProfileMode(null)}
+          />
+        )}
+      </AnimatePresenceModal>
+
+      <AnimatePresenceModal>
+        {user && profileMode === 'delete' && (
+          <DeleteAccountModal
+            user={user}
+            onDeleted={onAccountDeleted}
+            onClose={() => setProfileMode(null)}
+          />
+        )}
+      </AnimatePresenceModal>
     </div>
   );
+}
+
+/** AnimatePresence opcional para el modal: si la librería no carga, render directo. */
+function AnimatePresenceModal({ children }) {
+  if (!AnimatePresence) return <>{children}</>;
+  return <AnimatePresence>{children}</AnimatePresence>;
 }
 
 /* ============================================================
@@ -799,16 +1472,53 @@ function ThemeStyles() {
   return (
     <style>{`
       :root {
+        /* Surfaces — capas refinadas, paper-like */
         --bg:         #FFFFFF;
-        --bg-soft:    #F5F6F8;
-        --bg-card:    #FAFAFC;
-        --ink:        #0A0F1F;
-        --ink-mute:   #6B7480;
-        --ink-soft:   #2A2F3F;
-        --line:       #EEEFF2;
+        --bg-paper:   #FAF8F4;   /* crema editorial sutil */
+        --bg-soft:    #F2F3F6;
+        --bg-card:    #FAFAFB;
+        --bg-deep:    #0B1018;   /* dark cinemático para acentos invertidos */
+        /* Tinta — escala más rica */
+        --ink:        #0B0F19;
+        --ink-soft:   #1F2433;
+        --ink-mute:   #5B6373;
+        --ink-faint:  #8E95A4;
+        /* Líneas */
+        --line:       #ECEDF0;
+        --hairline:   #E1E3E8;
+        /* Azul cian refinado + acompañante profundo */
         --blue:       #4FB5E8;
-        --blue-press: #2E9BD9;
-        --blue-soft:  #E5F4FD;
+        --blue-press: #2696D1;
+        --blue-deep:  #1B4D6E;
+        --blue-soft:  #E8F4FB;
+        --blue-glow:  rgba(79,181,232,0.18);
+        /* Acento editorial — gold cálido para eyebrows premium */
+        --gold:       #A78B5E;
+        --gold-soft:  #EFE6D6;
+        /* Sombras editoriales */
+        --shadow-1: 0 1px 2px rgba(11,15,25,0.04), 0 1px 1px rgba(11,15,25,0.03);
+        --shadow-2: 0 2px 6px rgba(11,15,25,0.05), 0 8px 24px -8px rgba(11,15,25,0.08);
+        --shadow-3: 0 6px 14px rgba(11,15,25,0.06), 0 22px 50px -20px rgba(11,15,25,0.20);
+        /* Type scale modular (1.250 — major third) */
+        --t-12: 12px;
+        --t-13: 13px;
+        --t-14: 14px;
+        --t-15: 15px;
+        --t-17: 17px;
+        --t-19: 19px;
+        --t-22: 22px;
+        --t-28: 28px;
+        --t-36: 36px;
+        --t-48: 48px;
+        --t-64: 64px;
+        /* Spacing rhythm (4/8 pt) */
+        --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+        --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
+        --s-9: 96px; --s-10: 128px;
+        /* Type families */
+        --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --font-serif: "Playfair Display", "Cormorant", "EB Garamond", Georgia, serif;
+        --font-mono: ui-monospace, "SF Mono", "Geist Mono", Consolas, monospace;
       }
 
       *, *::before, *::after { box-sizing: border-box; }
@@ -816,13 +1526,16 @@ function ThemeStyles() {
         margin: 0; padding: 0;
         background: var(--bg);
         color: var(--ink);
-        font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        font-size: 15px;
-        line-height: 1.5;
+        font-family: var(--font-sans);
+        font-size: var(--t-15);
+        line-height: 1.55;
         -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
         text-rendering: optimizeLegibility;
         font-feature-settings: "ss01", "cv11";
+        font-variant-numeric: tabular-nums;
       }
+      ::selection { background: var(--blue-glow); color: var(--ink); }
       button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
       input { font: inherit; }
 
@@ -832,72 +1545,442 @@ function ThemeStyles() {
       /* ─── Header ───────────────────────────────────────────────── */
       .tn-header {
         position: sticky; top: 0; z-index: 50;
-        background: rgba(255,255,255,0.85);
-        backdrop-filter: saturate(1.4) blur(12px);
-        -webkit-backdrop-filter: saturate(1.4) blur(12px);
-        border-bottom: 1px solid var(--line);
+        background: rgba(255,255,255,0.72);
+        backdrop-filter: saturate(1.5) blur(18px);
+        -webkit-backdrop-filter: saturate(1.5) blur(18px);
+        border-bottom: 1px solid transparent;
+        background-image:
+          linear-gradient(rgba(255,255,255,0.72), rgba(255,255,255,0.72)),
+          linear-gradient(90deg, transparent 0%, var(--hairline) 18%, var(--hairline) 82%, transparent 100%);
+        background-origin: padding-box, border-box;
+        background-clip: padding-box, border-box;
+        background-repeat: no-repeat;
+        background-position: 0 0, 0 100%;
+        background-size: 100% calc(100% - 1px), 100% 1px;
       }
       .tn-head {
         max-width: 1400px; margin: 0 auto;
         display: flex; align-items: center; justify-content: space-between;
-        padding: 18px 40px; gap: 24px;
+        padding: 14px 40px; gap: 24px;
       }
       .tn-brand {
-        display: flex; align-items: center; gap: 9px;
-        font-weight: 600; font-size: 17px; letter-spacing: -0.02em;
+        display: inline-flex; align-items: center;
+        gap: 10px;
+        padding: 0;
+        transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+      }
+      .tn-brand:hover { transform: translateY(-1px); }
+      .tn-brand:active { transform: translateY(0); opacity: 0.85; }
+      .tn-brand-logo {
+        height: 72px;
+        width: auto;
+        display: block;
+        object-fit: contain;
+        /* Recorta el padding decorativo del PNG */
+        margin: -14px 0;
+      }
+      .tn-brand-word {
+        font-family: var(--font-serif);
+        font-weight: 500;
+        font-size: 26px;
+        line-height: 1;
+        letter-spacing: -0.005em;
         color: var(--ink);
+        font-feature-settings: "lnum";
       }
-      .tn-brand-dot {
-        width: 10px; height: 10px; border-radius: 50%;
-        background: var(--blue);
-        box-shadow: 0 0 0 4px rgba(79,181,232,0.18);
+      .tn-brand-word em {
+        font-style: italic;
+        color: var(--blue-deep);
       }
-      .tn-nav { display: flex; gap: 2px; font-size: 14px; font-weight: 500; }
+      @media (max-width: 980px) {
+        .tn-brand-logo { height: 56px; margin: -10px 0; }
+        .tn-brand-word { font-size: 22px; }
+      }
+      @media (max-width: 560px) {
+        .tn-brand-word { display: none; }
+      }
+      .tn-nav { display: flex; gap: 2px; font-size: 14px; font-weight: 500; position: relative; }
       .tn-nav button {
+        position: relative;
         padding: 8px 14px; border-radius: 8px; color: var(--ink-mute);
-        transition: color 0.15s ease, background 0.15s ease;
+        transition: color 0.18s ease;
+        isolation: isolate;
       }
       .tn-nav button:hover { color: var(--ink); }
-      .tn-nav button.on { color: var(--ink); background: var(--bg-soft); }
+      .tn-nav button.on { color: var(--ink); }
+      .tn-nav-ind {
+        position: absolute; inset: 0; z-index: -1;
+        background: var(--bg-soft);
+        border-radius: 8px;
+      }
+      .tn-nav-label { position: relative; z-index: 1; }
       .tn-nav button .pip {
         display: inline-block; margin-left: 6px;
         background: var(--blue); color: #fff;
         font-size: 10.5px; font-weight: 600;
         padding: 1px 6px; border-radius: 999px;
         vertical-align: 1px;
+        position: relative; z-index: 1;
       }
-      .tn-head-r { display: flex; align-items: center; gap: 10px; }
+      .tn-head-r { display: flex; align-items: center; gap: 8px; }
       .tn-iconbtn {
-        width: 38px; height: 38px; border-radius: 10px;
+        width: 38px; height: 38px; border-radius: 999px;
         display: inline-flex; align-items: center; justify-content: center;
         color: var(--ink-mute);
-        transition: background 0.15s ease, color 0.15s ease;
+        transition: background 0.2s ease, color 0.2s ease, transform 0.25s cubic-bezier(0.22,1,0.36,1);
         position: relative;
       }
-      .tn-iconbtn:hover { background: var(--bg-soft); color: var(--ink); }
+      .tn-iconbtn:hover {
+        background: var(--bg-soft); color: var(--ink);
+        transform: translateY(-1px);
+      }
       .tn-iconbtn.on { background: var(--blue-soft); color: var(--blue-press); }
       .tn-iconbtn .badge-num {
-        position: absolute; top: 4px; right: 4px;
+        position: absolute; top: 2px; right: 2px;
         min-width: 14px; height: 14px; padding: 0 3px;
         border-radius: 999px; background: var(--blue); color: #fff;
         font-size: 9.5px; font-weight: 700; line-height: 14px;
+        font-variant-numeric: tabular-nums;
         display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 0 0 2px var(--bg);
       }
+      .tn-av-wrap { position: relative; }
       .tn-av {
-        width: 34px; height: 34px; border-radius: 50%;
-        background: linear-gradient(135deg, var(--blue), #A7DDFC);
-        color: #fff; font-weight: 600; font-size: 12px; letter-spacing: 0.02em;
+        width: 38px; height: 38px; border-radius: 50%;
+        background: var(--bg-soft);
+        border: 1px solid var(--hairline);
+        color: var(--ink-mute);
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-weight: 500;
+        font-size: 15px;
+        letter-spacing: 0;
         display: flex; align-items: center; justify-content: center;
+        cursor: pointer;
+        transition: transform 0.28s cubic-bezier(0.22,1,0.36,1),
+                    box-shadow 0.28s ease, border-color 0.22s ease, color 0.22s ease;
+      }
+      .tn-av:hover {
+        transform: translateY(-1px);
+        border-color: var(--ink);
+        color: var(--ink);
+      }
+      .tn-av.on {
+        color: #fff;
+        border-color: transparent;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10), var(--shadow-2);
+      }
+      .tn-av.on:hover { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16), var(--shadow-3); }
+      .tn-av-tip {
+        position: absolute; top: calc(100% + 8px); right: 0;
+        font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+        font-weight: 600; color: var(--ink-faint);
+        white-space: nowrap; pointer-events: none;
+        opacity: 0; transform: translateY(-4px);
+        transition: opacity 0.22s ease, transform 0.22s ease;
+      }
+      .tn-av-wrap:hover .tn-av-tip { opacity: 1; transform: translateY(0); }
+
+      /* ─── Profile menu (dropdown) ───────────────────────────── */
+      .tn-pm {
+        position: absolute;
+        top: calc(100% + 12px); right: 0;
+        width: 320px;
+        background: var(--bg);
+        border: 1px solid var(--hairline);
+        border-radius: 16px;
+        box-shadow: var(--shadow-3);
+        padding: 18px;
+        z-index: 60;
+      }
+      .tn-pm-head {
+        display: flex; align-items: center; gap: 12px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--hairline);
+      }
+      .tn-pm-av {
+        width: 48px; height: 48px; border-radius: 50%;
+        background: var(--ink); color: #fff;
+        font-family: var(--font-serif); font-style: italic; font-weight: 500;
+        font-size: 20px;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
+      }
+      .tn-pm-id { display: flex; flex-direction: column; min-width: 0; }
+      .tn-pm-name {
+        font-family: var(--font-sans);
+        font-size: 15px; font-weight: 500;
+        color: var(--ink); letter-spacing: -0.005em;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .tn-pm-email {
+        font-size: 12.5px; color: var(--ink-mute);
+        font-variant-numeric: tabular-nums;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .tn-pm-stats {
+        display: grid; grid-template-columns: 1fr 1fr 1.2fr;
+        gap: 10px;
+        padding: 14px 0;
+        border-bottom: 1px solid var(--hairline);
+      }
+      .tn-pm-stats > div { display: flex; flex-direction: column; gap: 2px; }
+      .tn-pm-stat-v {
+        font-family: var(--font-sans);
+        font-size: 19px; font-weight: 500; color: var(--ink);
+        letter-spacing: -0.018em;
+        font-variant-numeric: tabular-nums;
+      }
+      .tn-pm-stat-l {
+        font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+        color: var(--ink-faint); font-weight: 600;
+      }
+      .tn-pm-actions {
+        display: flex; flex-direction: column; gap: 6px;
+        padding-top: 14px;
+      }
+      .tn-pm-btn {
+        display: inline-flex; align-items: center; justify-content: space-between;
+        gap: 8px;
+        padding: 10px 14px; border-radius: 10px;
+        font-size: 13.5px; font-weight: 500;
+        background: var(--bg-soft); color: var(--ink);
+        transition: background 0.22s ease, color 0.22s ease;
+      }
+      .tn-pm-btn:hover { background: var(--ink); color: #fff; }
+      .tn-pm-btn.ghost { background: transparent; }
+      .tn-pm-btn.ghost:hover { background: var(--bg-soft); color: var(--ink); }
+      .tn-pm-btn.danger { color: #B8412B; }
+      .tn-pm-btn.danger:hover { background: #FBE9E5; color: #8C2D14; }
+      .tn-pm-sep {
+        height: 1px; background: var(--hairline);
+        margin: 6px -4px 2px;
+      }
+
+      /* ─── Auth modal ───────────────────────────────────────── */
+      .tn-auth-bg { z-index: 110; }
+      .tn-auth {
+        position: relative;
+        background: var(--bg);
+        border-radius: 22px;
+        width: 100%; max-width: 480px;
+        padding: 40px 40px 36px;
+        box-shadow: var(--shadow-3);
+      }
+      .tn-auth-head { text-align: center; margin-bottom: 28px; }
+      .tn-auth-logo {
+        width: 64px; height: auto; display: block;
+        margin: 0 auto 14px;
+      }
+      .tn-auth-title {
+        font-family: var(--font-sans);
+        font-size: 30px; font-weight: 500;
+        letter-spacing: -0.025em; line-height: 1.1;
+        color: var(--ink);
+      }
+      .tn-auth-title em {
+        font-family: var(--font-serif); font-style: italic; font-weight: 500;
+        color: var(--blue-deep);
+      }
+      .tn-auth-sub {
+        font-family: var(--font-serif); font-style: italic;
+        color: var(--ink-mute); margin-top: 8px;
+        font-size: 14.5px; letter-spacing: -0.003em;
+      }
+
+      .tn-auth-tabs {
+        position: relative;
+        display: grid; grid-template-columns: 1fr 1fr;
+        background: var(--bg-paper);
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
+        padding: 4px;
+        margin-bottom: 22px;
+      }
+      .tn-auth-tab {
+        position: relative; z-index: 1;
+        padding: 9px 0;
+        font-size: 13px; font-weight: 500;
+        color: var(--ink-mute);
+        transition: color 0.22s ease;
+      }
+      .tn-auth-tab.on { color: #fff; }
+      .tn-auth-tab-ind {
+        position: absolute; top: 4px; bottom: 4px; left: 4px;
+        width: calc(50% - 4px);
+        background: var(--ink); border-radius: 999px;
+        transition: transform 0.4s cubic-bezier(0.22,1,0.36,1);
+        z-index: 0;
+      }
+      .tn-auth-tab-ind.right { transform: translateX(100%); }
+
+      .tn-auth-form { display: flex; flex-direction: column; gap: 14px; }
+      .tn-auth-field { display: flex; flex-direction: column; gap: 6px; }
+      .tn-auth-label {
+        font-size: 10px; font-weight: 600; color: var(--ink-faint);
+        text-transform: uppercase; letter-spacing: 0.14em;
+      }
+      .tn-auth-field input {
+        font-family: var(--font-sans);
+        font-size: 15px;
+        padding: 12px 14px;
+        background: var(--bg);
+        border: 1px solid var(--hairline);
+        border-radius: 12px;
+        color: var(--ink);
+        letter-spacing: -0.005em;
+        outline: 0;
+        transition: border-color 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
+      }
+      .tn-auth-field input::placeholder { color: var(--ink-faint); }
+      .tn-auth-field input:focus {
+        border-color: var(--blue);
+        box-shadow: 0 0 0 4px var(--blue-glow);
+      }
+      .tn-auth-field input:disabled { opacity: 0.5; cursor: not-allowed; }
+      .tn-auth-pass { position: relative; }
+      .tn-auth-pass input { width: 100%; padding-right: 80px; }
+      .tn-auth-pass-toggle {
+        position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+        font-size: 11px; font-weight: 600; color: var(--ink-mute);
+        padding: 6px 10px; border-radius: 999px;
+        text-transform: uppercase; letter-spacing: 0.1em;
+        transition: color 0.18s ease, background 0.18s ease;
+      }
+      .tn-auth-pass-toggle:hover { background: var(--bg-soft); color: var(--ink); }
+
+      .tn-auth-err {
+        background: #FBE9E5; border: 1px solid #F2C5BA;
+        color: #8C2D14;
+        font-size: 13px; padding: 10px 14px; border-radius: 10px;
+        letter-spacing: -0.003em;
+      }
+
+      .tn-auth-submit {
+        margin-top: 4px;
+        display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+        padding: 13px 20px; border-radius: 999px;
+        background: var(--ink); color: #fff;
+        font-size: 14px; font-weight: 500;
+        letter-spacing: -0.005em;
+        transition: background 0.22s ease, transform 0.28s cubic-bezier(0.22,1,0.36,1),
+                    box-shadow 0.28s ease;
+        box-shadow: var(--shadow-2);
+      }
+      .tn-auth-submit:hover:not(:disabled) {
+        background: var(--bg-deep); transform: translateY(-2px); box-shadow: var(--shadow-3);
+      }
+      .tn-auth-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+      .tn-auth-switch {
+        font-size: 13px; color: var(--ink-mute);
+        text-align: center; margin-top: 6px;
+      }
+      .tn-auth-switch button {
+        color: var(--blue-press); font-weight: 500;
+        text-decoration: underline; text-underline-offset: 3px;
+      }
+      .tn-auth-switch button:hover { color: var(--blue-deep); }
+      .tn-auth-note {
+        text-align: center;
+        font-size: 11px;
+        color: var(--ink-faint);
+        letter-spacing: 0.02em;
+        margin-top: 8px;
+        font-family: var(--font-serif); font-style: italic;
+      }
+
+      /* Gender picker — segmented control */
+      .tn-gender-picker {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        background: var(--bg-paper);
+        border: 1px solid var(--hairline);
+        border-radius: 14px;
+        padding: 4px;
+      }
+      .tn-gender-opt {
+        padding: 10px 8px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--ink-mute);
+        background: transparent;
+        text-align: center;
+        letter-spacing: -0.003em;
+        transition: background 0.22s ease, color 0.22s ease, transform 0.25s cubic-bezier(0.22,1,0.36,1);
+      }
+      .tn-gender-opt:hover:not(:disabled) { color: var(--ink); }
+      .tn-gender-opt.on {
+        background: var(--ink); color: #fff;
+        box-shadow: var(--shadow-1);
+      }
+      .tn-gender-opt:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      /* Edit profile — avatar grande arriba */
+      .tn-auth-av {
+        width: 64px; height: 64px; border-radius: 50%;
+        background: var(--ink); color: #fff;
+        font-family: var(--font-serif); font-style: italic; font-weight: 500;
+        font-size: 28px; letter-spacing: -0.02em;
+        display: flex; align-items: center; justify-content: center;
+        margin: 0 auto 14px;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
+      }
+
+      /* Delete confirm — callout + tono peligro */
+      .tn-auth-danger {
+        border-top: 3px solid #B8412B;
+      }
+      .tn-auth-callout {
+        display: flex; flex-direction: column; gap: 4px;
+        padding: 14px 16px; border-radius: 12px;
+        background: #FBE9E5; border: 1px solid #F2C5BA;
+        margin-bottom: 18px;
+      }
+      .tn-auth-callout-label {
+        font-size: 10px; font-weight: 600; color: #8C2D14;
+        text-transform: uppercase; letter-spacing: 0.14em;
+      }
+      .tn-auth-callout-value {
+        font-size: 15px; color: #8C2D14;
+        font-variant-numeric: tabular-nums;
+        word-break: break-all;
+      }
+      .tn-auth-field code {
+        background: var(--bg-soft);
+        border: 1px solid var(--hairline);
+        padding: 0 5px; border-radius: 4px;
+        font-family: var(--font-mono);
+        font-size: 11px; font-weight: 600; color: var(--ink);
+        letter-spacing: 0;
+      }
+      .tn-auth-submit.danger {
+        background: #B8412B;
+        box-shadow: 0 4px 14px rgba(184,65,43,0.22);
+      }
+      .tn-auth-submit.danger:hover:not(:disabled) {
+        background: #8C2D14;
+        box-shadow: 0 8px 22px rgba(184,65,43,0.32);
+      }
+
+
+      @media (max-width: 560px) {
+        .tn-auth { padding: 28px 24px 24px; }
+        .tn-auth-title { font-size: 24px; }
+        .tn-pm { width: 280px; right: -8px; }
       }
 
       /* ─── Hero ─────────────────────────────────────────────────── */
-      .tn-hero { padding: 96px 0 64px; display: grid; gap: 0; position: relative; }
+      .tn-hero { padding: 104px 0 72px; display: grid; gap: 0; position: relative; }
 
       /* Home hero: dos columnas con animación a la derecha. La vista Archive
          sigue usando .tn-hero sin modificador (una columna). */
       .tn-hero.tn-hero--home {
         grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-        gap: 56px;
+        gap: 64px;
         align-items: center;
       }
       .tn-hero--home .tn-hero-left  { display: flex; flex-direction: column; min-width: 0; }
@@ -905,14 +1988,19 @@ function ThemeStyles() {
                                       position: relative; min-width: 0; }
 
       .tn-pill {
-        display: inline-flex; align-items: center; gap: 8px;
-        padding: 6px 12px 6px 8px; border-radius: 999px;
+        display: inline-flex; align-items: center; gap: 9px;
+        padding: 5px 13px 5px 9px; border-radius: 999px;
         background: var(--bg-soft);
-        font-size: 12.5px; color: var(--ink-mute); font-weight: 500;
+        border: 1px solid var(--hairline);
+        font-size: 11.5px;
+        color: var(--ink-soft);
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
         width: fit-content; align-self: flex-start;
       }
       .tn-pill .dot {
-        width: 8px; height: 8px; border-radius: 50%; background: var(--blue);
+        width: 7px; height: 7px; border-radius: 50%; background: var(--blue);
         animation: tn-ping 1.8s infinite;
       }
       @keyframes tn-ping {
@@ -921,14 +2009,52 @@ function ThemeStyles() {
         100% { box-shadow: 0 0 0 0 rgba(79,181,232,0); }
       }
       .tn-title {
-        font-size: clamp(60px, 7.5vw, 104px);
-        line-height: 0.94; letter-spacing: -0.045em; font-weight: 600;
-        margin-top: 28px; max-width: 12ch; text-wrap: balance;
+        font-family: var(--font-sans);
+        font-size: clamp(56px, 7.4vw, 108px);
+        line-height: 0.92;
+        letter-spacing: -0.045em;
+        font-weight: 500;
+        margin-top: 32px;
+        max-width: 13ch;
+        text-wrap: balance;
+        color: var(--ink);
       }
-      .tn-title em { font-style: normal; color: var(--blue); }
+      .tn-title em {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-weight: 500;
+        color: var(--blue-deep);
+        letter-spacing: -0.025em;
+        position: relative; display: inline-block;
+        padding-right: 0.04em;
+      }
+      .tn-title em::after {
+        content: ""; position: absolute;
+        left: 0.04em; right: 0.10em; bottom: -0.08em;
+        height: 0.06em; border-radius: 999px;
+        background: linear-gradient(90deg,
+          rgba(79,181,232,0.0) 0%,
+          rgba(79,181,232,0.7) 16%,
+          rgba(79,181,232,0.95) 50%,
+          rgba(79,181,232,0.7) 84%,
+          rgba(79,181,232,0.0) 100%);
+        transform: scaleX(0); transform-origin: left center;
+        animation: tn-emUnderline 1.3s 1.05s cubic-bezier(0.22,1,0.36,1) forwards;
+        pointer-events: none;
+      }
+      @keyframes tn-emUnderline {
+        0%   { transform: scaleX(0); opacity: 0; }
+        100% { transform: scaleX(1); opacity: 1; }
+      }
       .tn-sub {
-        color: var(--ink-mute); font-size: 17px; margin-top: 20px; max-width: 520px;
+        color: var(--ink-mute);
+        font-size: var(--t-17);
+        line-height: 1.6;
+        margin-top: 24px;
+        max-width: 56ch;
+        letter-spacing: -0.003em;
       }
+      .tn-sub b { color: var(--ink-soft); font-weight: 500; }
 
       /* ─── Hero bottle 3D (Three.js canvas) ─────────────────────── */
       .tn-bottle-stage {
@@ -972,28 +2098,66 @@ function ThemeStyles() {
 
       /* Composer */
       .tn-composer {
-        margin-top: 44px; max-width: 820px;
+        position: relative;
+        margin-top: 48px; max-width: 820px;
         display: grid; grid-template-columns: 1fr auto;
         gap: 14px; align-items: center;
-        border-bottom: 1.5px solid var(--ink);
+        border-bottom: 1px solid var(--ink);
         padding-bottom: 14px;
-        transition: border-color 0.2s ease;
+        transition: border-color 0.25s ease;
       }
-      .tn-composer:focus-within { border-color: var(--blue); }
+      .tn-composer::before {
+        /* indicador editorial: pequeña marca a la izquierda */
+        content: ""; position: absolute; left: -16px; top: 50%;
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--blue); transform: translateY(-50%);
+        opacity: 0; transition: opacity 0.3s ease;
+      }
+      .tn-composer:focus-within::before { opacity: 1; }
+      .tn-composer::after {
+        content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
+        height: 1.5px; background: var(--blue);
+        transform: scaleX(0); transform-origin: left center;
+        transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .tn-composer:focus-within { border-color: transparent; }
+      .tn-composer:focus-within::after { transform: scaleX(1); }
       .tn-composer input {
         width: 100%; border: 0; outline: 0; background: transparent;
-        font-size: 22px; font-weight: 400; color: var(--ink);
-        padding: 14px 0; letter-spacing: -0.01em;
+        font-family: var(--font-sans);
+        font-size: 23px; font-weight: 400; color: var(--ink);
+        padding: 14px 0; letter-spacing: -0.015em;
+        line-height: 1.35;
       }
-      .tn-composer input::placeholder { color: var(--ink-mute); }
+      .tn-composer input::placeholder {
+        color: var(--ink-faint);
+        font-style: italic;
+        font-family: var(--font-serif);
+        font-weight: 400;
+        letter-spacing: -0.01em;
+      }
       .tn-go {
         width: 54px; height: 54px; border-radius: 50%;
         background: var(--blue); color: #fff;
         display: inline-flex; align-items: center; justify-content: center;
-        transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+        transition: transform 0.28s cubic-bezier(0.22,1,0.36,1),
+                    background 0.18s ease,
+                    box-shadow 0.28s ease;
         box-shadow: 0 6px 20px rgba(79,181,232,0.45);
+        position: relative; overflow: hidden;
       }
-      .tn-go:hover:not(:disabled) { background: var(--blue-press); transform: translateX(3px); }
+      .tn-go::before {
+        content: ""; position: absolute; inset: 0; border-radius: inherit;
+        background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.4), transparent 60%);
+        opacity: 0; transition: opacity 0.3s ease;
+      }
+      .tn-go:hover:not(:disabled) {
+        background: var(--blue-press);
+        transform: translateX(4px) scale(1.05);
+        box-shadow: 0 10px 26px rgba(79,181,232,0.55);
+      }
+      .tn-go:hover:not(:disabled)::before { opacity: 1; }
+      .tn-go:active:not(:disabled) { transform: translateX(2px) scale(0.97); }
       .tn-go:disabled { background: var(--ink-mute); box-shadow: none; cursor: not-allowed; opacity: 0.55; }
       .tn-go.loading { animation: tn-pulse 1.5s ease-in-out infinite; }
       @keyframes tn-pulse {
@@ -1003,17 +2167,42 @@ function ThemeStyles() {
 
       /* Tags */
       .tn-tags {
-        margin-top: 22px;
+        margin-top: 28px;
         display: flex; flex-wrap: wrap; gap: 8px; max-width: 820px;
+        align-items: center;
+      }
+      .tn-tags::before {
+        content: "Inspírate";
+        font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+        color: var(--ink-faint); font-weight: 600;
+        padding-right: 14px; margin-right: 6px;
+        border-right: 1px solid var(--hairline);
       }
       .tn-tag {
-        font-size: 13.5px; color: var(--ink-mute); font-weight: 500;
-        padding: 8px 14px; border-radius: 999px;
-        background: var(--bg-soft);
-        transition: background 0.15s ease, color 0.15s ease;
+        font-size: 13px;
+        color: var(--ink-soft);
+        font-weight: 500;
+        padding: 7px 14px; border-radius: 999px;
+        background: transparent;
+        border: 1px solid var(--hairline);
+        transition: background 0.22s cubic-bezier(0.22,1,0.36,1),
+                    color 0.22s ease,
+                    border-color 0.22s ease,
+                    transform 0.28s cubic-bezier(0.22,1,0.36,1),
+                    box-shadow 0.28s ease;
       }
-      .tn-tag:hover { background: var(--blue-soft); color: var(--blue-press); }
-      .tn-tag.act { background: var(--ink); color: #fff; }
+      .tn-tag:hover {
+        background: var(--bg);
+        color: var(--blue-press);
+        border-color: var(--blue);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px var(--blue-glow);
+      }
+      .tn-tag:active { transform: translateY(0); }
+      .tn-tag.act {
+        background: var(--ink); color: #fff; border-color: var(--ink);
+      }
+      .tn-tag.act:hover { box-shadow: 0 8px 18px rgba(11,15,25,0.22); }
       .tn-tag.icon { display: inline-flex; align-items: center; gap: 6px; }
 
       /* Filter panel */
@@ -1030,23 +2219,30 @@ function ThemeStyles() {
       .tn-filter-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px 28px; }
       @media (min-width: 760px) { .tn-filter-grid { grid-template-columns: repeat(3, 1fr); } }
       .tn-flabel {
-        font-size: 11px; font-weight: 600; color: var(--ink-mute);
-        text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;
+        font-size: 10px; font-weight: 600; color: var(--ink-faint);
+        text-transform: uppercase; letter-spacing: 0.14em; margin-bottom: 12px;
       }
       .tn-fchips { display: flex; flex-wrap: wrap; gap: 6px; }
       .tn-fchip {
-        font-size: 12.5px; padding: 6px 11px; border-radius: 999px;
-        background: var(--bg); color: var(--ink-soft);
-        border: 1px solid var(--line);
-        transition: all 0.15s ease;
+        font-size: 12.5px; padding: 6px 13px; border-radius: 999px;
+        background: var(--bg); color: var(--ink-soft); font-weight: 500;
+        border: 1px solid var(--hairline);
+        letter-spacing: -0.003em;
+        transition: background 0.2s ease, color 0.2s ease,
+                    border-color 0.2s ease, transform 0.25s cubic-bezier(0.22,1,0.36,1);
       }
-      .tn-fchip:hover { border-color: var(--blue); color: var(--blue-press); }
+      .tn-fchip:hover {
+        border-color: var(--blue); color: var(--blue-press);
+        transform: translateY(-1px);
+      }
       .tn-fchip.on {
         background: var(--ink); color: #fff; border-color: var(--ink);
       }
       .tn-clear {
-        margin-top: 14px; font-size: 12.5px; color: var(--ink-mute);
+        margin-top: 14px; font-size: 12px; color: var(--ink-faint);
         display: inline-flex; align-items: center; gap: 4px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase; font-weight: 600;
       }
       .tn-clear:hover { color: var(--ink); }
 
@@ -1066,30 +2262,59 @@ function ThemeStyles() {
       /* ─── Split section header ─────────────────────────────────── */
       .tn-split {
         margin-top: 96px; padding-top: 48px;
-        border-top: 1px solid var(--line);
+        border-top: 1px solid var(--hairline);
         display: flex; justify-content: space-between; align-items: baseline;
-        gap: 18px; flex-wrap: wrap;
+        gap: 20px; flex-wrap: wrap;
+        position: relative;
+      }
+      .tn-split::before {
+        content: ""; position: absolute; top: -1px; left: 0;
+        width: 64px; height: 2px;
+        background: var(--ink);
       }
       .tn-split h2 {
-        font-size: 42px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.05;
+        font-family: var(--font-sans);
+        font-size: clamp(32px, 3.6vw, 46px);
+        font-weight: 500;
+        letter-spacing: -0.03em;
+        line-height: 1.05;
+        color: var(--ink);
+      }
+      .tn-split h2 em {
+        font-family: var(--font-serif);
+        font-style: italic; font-weight: 500;
+        color: var(--blue-deep);
+        letter-spacing: -0.018em;
       }
       .tn-split h2 .count {
-        color: var(--ink-mute); font-weight: 500;
-        margin-left: 14px; font-size: 18px; vertical-align: 8px;
+        color: var(--ink-faint);
+        font-weight: 400;
+        margin-left: 14px;
+        font-size: 16px;
+        vertical-align: 10px;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0;
       }
       .tn-split .meta {
-        font-size: 14px; color: var(--ink-mute);
+        font-size: 13.5px; color: var(--ink-mute);
         display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
       }
-      .tn-split .meta b { color: var(--ink); font-weight: 500; }
+      .tn-split .meta b {
+        color: var(--ink); font-weight: 500;
+        font-family: var(--font-serif); font-style: italic;
+      }
       .tn-sort {
         display: inline-flex; align-items: center; gap: 8px;
-        padding: 9px 14px; border-radius: 10px;
-        background: var(--bg-soft); font-size: 13.5px; font-weight: 500;
-        color: var(--ink);
-        transition: background 0.15s ease;
+        padding: 9px 16px; border-radius: 999px;
+        background: transparent;
+        border: 1px solid var(--hairline);
+        font-size: 13px; font-weight: 500;
+        color: var(--ink-soft);
+        transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
       }
-      .tn-sort:hover { background: var(--blue-soft); color: var(--blue-press); }
+      .tn-sort:hover {
+        background: var(--ink); color: #fff; border-color: var(--ink);
+      }
 
       /* ─── Card grid ────────────────────────────────────────────── */
       .tn-grid {
@@ -1099,16 +2324,29 @@ function ThemeStyles() {
       .tn-card {
         cursor: pointer; display: flex; flex-direction: column; gap: 14px;
         position: relative;
-        transition: transform 0.25s cubic-bezier(0.2, 0.7, 0.3, 1);
+        transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
         text-align: left;
       }
-      .tn-card:hover { transform: translateY(-4px); }
 
       .tn-frame {
         position: relative; aspect-ratio: 4 / 5;
-        border-radius: 18px; overflow: hidden;
-        box-shadow: 0 0 0 1px var(--line);
+        border-radius: 16px; overflow: hidden;
+        box-shadow: inset 0 0 0 1px var(--hairline);
         display: flex; align-items: center; justify-content: center;
+        transition: box-shadow 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+                    transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .tn-card:hover .tn-frame {
+        box-shadow: inset 0 0 0 1px transparent,
+                    0 24px 56px -22px rgba(11,15,25,0.32),
+                    0 0 0 1px rgba(79,181,232,0.20);
+      }
+      .tn-card:hover .tn-img,
+      .tn-card:hover svg.tn-bottle {
+        transform: scale(1.045);
+      }
+      .tn-img, svg.tn-bottle {
+        transition: transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
       }
       .tn-frame::after {
         content: ""; position: absolute; inset: 0; z-index: 1;
@@ -1133,17 +2371,24 @@ function ThemeStyles() {
       }
 
       .tn-badge {
-        position: absolute; left: 14px; top: 14px; z-index: 3;
-        background: rgba(255,255,255,0.92);
-        -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
-        border-radius: 999px; padding: 6px 11px 6px 8px;
-        display: inline-flex; align-items: center; gap: 6px;
-        font-size: 12.5px; font-weight: 600; letter-spacing: -0.005em;
+        position: absolute; left: 12px; top: 12px; z-index: 3;
+        background: rgba(255,255,255,0.94);
+        -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+        border: 1px solid rgba(255,255,255,0.6);
+        border-radius: 999px; padding: 5px 11px 5px 7px;
+        display: inline-flex; align-items: center; gap: 7px;
+        font-size: 12px; font-weight: 600;
+        letter-spacing: 0;
+        font-variant-numeric: tabular-nums;
         color: var(--ink);
-        box-shadow: 0 2px 8px rgba(10,15,31,0.06);
+        box-shadow: var(--shadow-1);
       }
-      .tn-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); }
-      .tn-badge.top .dot { box-shadow: 0 0 0 3px rgba(79,181,232,0.28); }
+      .tn-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
+      .tn-badge.top { background: var(--ink); color: #fff; border-color: rgba(255,255,255,0.1); }
+      .tn-badge.top .dot {
+        background: var(--blue);
+        box-shadow: 0 0 0 3px var(--blue-glow);
+      }
 
       .tn-heart {
         position: absolute; right: 14px; top: 14px; z-index: 3;
@@ -1153,37 +2398,91 @@ function ThemeStyles() {
         display: inline-flex; align-items: center; justify-content: center;
         color: var(--ink-mute);
         box-shadow: 0 2px 8px rgba(10,15,31,0.06);
-        transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+        transition: color 0.18s ease, background 0.18s ease, transform 0.18s ease;
       }
-      .tn-heart:hover { color: var(--blue-press); transform: scale(1.06); }
-      .tn-heart.on { color: #fff; background: var(--blue); }
+      .tn-heart:hover { color: var(--blue-press); transform: scale(1.1); }
+      .tn-heart.on {
+        color: #fff; background: var(--blue);
+        animation: tn-heartPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+      @keyframes tn-heartPop {
+        0%   { transform: scale(0.6); }
+        60%  { transform: scale(1.22); }
+        100% { transform: scale(1); }
+      }
 
       .tn-corner {
-        position: absolute; left: 14px; bottom: 14px; z-index: 3;
-        font-size: 10.5px; font-weight: 600; color: var(--ink);
+        position: absolute; left: 12px; bottom: 12px; z-index: 3;
+        font-size: 10px; font-weight: 600;
+        color: var(--ink);
         background: rgba(255,255,255,0.85);
-        -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-        padding: 4px 9px; border-radius: 999px; letter-spacing: 0.03em;
+        -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,0.5);
+        padding: 4px 10px; border-radius: 999px;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
       }
 
       .tn-name {
         display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+        padding-top: 2px;
       }
       .tn-who {
-        font-size: 19px; font-weight: 600; letter-spacing: -0.015em;
-        line-height: 1.15; color: var(--ink);
+        font-family: var(--font-sans);
+        font-size: 17.5px; font-weight: 500;
+        letter-spacing: -0.018em;
+        line-height: 1.18; color: var(--ink);
       }
       .tn-who small {
-        display: block; font-size: 13px; font-weight: 500; color: var(--ink-mute);
-        margin-top: 2px; letter-spacing: 0;
+        display: block;
+        font-size: 12.5px; font-weight: 400;
+        color: var(--ink-mute);
+        margin-top: 4px; letter-spacing: 0;
+        font-variant-numeric: tabular-nums;
       }
       .tn-px {
-        font-size: 18px; font-weight: 600; letter-spacing: -0.015em;
+        font-family: var(--font-serif);
+        font-size: 17px; font-weight: 500;
+        font-style: italic;
+        letter-spacing: -0.01em;
         color: var(--ink); white-space: nowrap;
+        font-variant-numeric: tabular-nums;
       }
       .tn-notes {
-        font-size: 13.5px; color: var(--ink-mute); line-height: 1.5; margin-top: -4px;
+        font-size: 13px; color: var(--ink-mute); line-height: 1.55;
+        margin-top: 2px;
+        font-style: italic;
+        font-family: var(--font-serif);
+        letter-spacing: -0.005em;
+      }
+
+      /* ─── Spray search loader ──────────────────────────────── */
+      .tn-spray-loader {
+        margin: 64px auto 88px;
+        display: flex; flex-direction: column;
+        align-items: center; gap: 28px;
+        padding-bottom: 24px;
+      }
+      .tn-spray-svg {
+        width: 280px; height: 280px;
+        max-width: 70vw;
+        filter: drop-shadow(0 18px 30px rgba(79,181,232,0.18))
+                drop-shadow(0 4px 8px rgba(11,15,25,0.06));
+      }
+      .tn-spray-text {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 16px;
+        letter-spacing: -0.005em;
+        color: var(--ink-mute);
+        animation: tn-spray-textfade 1.8s ease-in-out infinite;
+      }
+      @keyframes tn-spray-textfade {
+        0%, 100% { opacity: 0.55; }
+        50%      { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .tn-spray-text { animation: none; opacity: 1; }
       }
 
       /* Skeleton */
@@ -1210,32 +2509,58 @@ function ThemeStyles() {
       }
       .tn-hist button {
         display: flex; align-items: center; gap: 14px; width: 100%;
-        padding: 14px 18px; border-radius: 12px;
-        background: var(--bg-soft);
-        text-align: left; transition: background 0.15s ease;
+        padding: 16px 20px; border-radius: 14px;
+        background: var(--bg-paper);
+        border: 1px solid var(--hairline);
+        text-align: left;
+        transition: background 0.22s ease, border-color 0.22s ease,
+                    transform 0.28s cubic-bezier(0.22,1,0.36,1);
       }
-      .tn-hist button:hover { background: var(--blue-soft); }
-      .tn-hist .hi { color: var(--ink-mute); flex-shrink: 0; }
+      .tn-hist button:hover {
+        background: var(--bg);
+        border-color: var(--blue);
+        transform: translateX(4px);
+      }
+      .tn-hist .hi { color: var(--blue-press); flex-shrink: 0; }
       .tn-hist .hq {
-        flex: 1; font-size: 14.5px; color: var(--ink); font-weight: 500;
+        flex: 1;
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 15px; color: var(--ink); font-weight: 500;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        letter-spacing: -0.005em;
       }
-      .tn-hist .hd { font-size: 12px; color: var(--ink-mute); white-space: nowrap; }
+      .tn-hist .hd {
+        font-size: 11px; color: var(--ink-faint); white-space: nowrap;
+        letter-spacing: 0.08em; text-transform: uppercase;
+        font-variant-numeric: tabular-nums;
+      }
 
       /* Empty state */
       .tn-empty {
-        margin-top: 36px; padding: 56px 28px;
-        text-align: center; background: var(--bg-card);
-        border: 1px dashed var(--line); border-radius: 16px;
+        margin-top: 40px; padding: 72px 32px;
+        text-align: center;
+        background: var(--bg-paper);
+        border: 1px dashed var(--hairline);
+        border-radius: 18px;
       }
-      .tn-empty p { color: var(--ink-mute); font-size: 16px; margin-bottom: 18px; }
+      .tn-empty p {
+        font-family: var(--font-serif);
+        font-style: italic;
+        color: var(--ink-mute);
+        font-size: 17px;
+        margin-bottom: 22px;
+        letter-spacing: -0.005em;
+      }
       .tn-empty button {
         display: inline-flex; align-items: center; gap: 8px;
-        padding: 10px 18px; border-radius: 999px;
-        background: var(--ink); color: #fff; font-size: 13.5px; font-weight: 500;
-        transition: background 0.15s ease;
+        padding: 11px 20px; border-radius: 999px;
+        background: var(--ink); color: #fff;
+        font-size: 13.5px; font-weight: 500;
+        letter-spacing: -0.005em;
+        transition: background 0.22s ease, transform 0.28s cubic-bezier(0.22,1,0.36,1);
       }
-      .tn-empty button:hover { background: #1F2540; }
+      .tn-empty button:hover { background: var(--bg-deep); transform: translateY(-2px); }
 
       /* ─── Modal ────────────────────────────────────────────────── */
       .tn-modal-bg {
@@ -1244,29 +2569,28 @@ function ThemeStyles() {
         -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
         display: flex; align-items: center; justify-content: center;
         padding: 24px;
-        animation: tn-fadeIn 0.2s ease-out;
       }
-      @keyframes tn-fadeIn { from { opacity: 0; } to { opacity: 1; } }
       .tn-modal {
         background: var(--bg); border-radius: 22px; overflow: hidden;
         width: 100%; max-width: 1080px; max-height: 92vh; overflow-y: auto;
         box-shadow: 0 30px 80px rgba(10,15,31,0.25);
         position: relative;
-        animation: tn-modalUp 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
-      }
-      @keyframes tn-modalUp {
-        from { opacity: 0; transform: translateY(20px) scale(0.98); }
-        to { opacity: 1; transform: translateY(0) scale(1); }
       }
       .tn-modal-close {
-        position: absolute; top: 18px; right: 18px; z-index: 5;
+        position: absolute; top: 20px; right: 20px; z-index: 5;
         width: 38px; height: 38px; border-radius: 50%;
-        background: rgba(255,255,255,0.85); color: var(--ink-mute);
+        background: rgba(255,255,255,0.92); color: var(--ink-mute);
+        -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+        border: 1px solid var(--hairline);
         display: flex; align-items: center; justify-content: center;
-        box-shadow: 0 2px 10px rgba(10,15,31,0.10);
-        transition: color 0.15s ease, transform 0.15s ease;
+        box-shadow: var(--shadow-2);
+        transition: color 0.2s ease, transform 0.3s cubic-bezier(0.22,1,0.36,1),
+                    background 0.2s ease, border-color 0.2s ease;
       }
-      .tn-modal-close:hover { color: var(--ink); transform: rotate(90deg); }
+      .tn-modal-close:hover {
+        color: #fff; background: var(--ink); border-color: var(--ink);
+        transform: rotate(90deg);
+      }
 
       .tn-modal-grid {
         display: grid; grid-template-columns: 1fr; gap: 0;
@@ -1291,80 +2615,146 @@ function ThemeStyles() {
         filter: drop-shadow(0 18px 36px rgba(10,15,31,0.22));
       }
       .tn-modal-info {
-        padding: 36px 40px 40px;
-        display: flex; flex-direction: column; gap: 18px;
+        padding: 40px 44px 44px;
+        display: flex; flex-direction: column; gap: 20px;
       }
       .tn-modal-info h2 {
-        font-size: 36px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.05;
+        font-family: var(--font-sans);
+        font-size: clamp(30px, 3.2vw, 40px);
+        font-weight: 500;
+        letter-spacing: -0.028em;
+        line-height: 1.05;
+        color: var(--ink);
       }
-      .tn-modal-house { font-size: 14px; color: var(--ink-mute); margin-top: -8px; }
-      .tn-modal-desc { font-size: 15.5px; color: var(--ink-soft); line-height: 1.55; }
+      .tn-modal-info h2 em {
+        font-family: var(--font-serif); font-style: italic; font-weight: 500;
+        color: var(--blue-deep);
+      }
+      .tn-modal-house {
+        font-size: 13.5px; color: var(--ink-mute); margin-top: -10px;
+        letter-spacing: -0.005em;
+        font-variant-numeric: tabular-nums;
+      }
+      .tn-modal-desc {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 17px; color: var(--ink-soft); line-height: 1.55;
+        letter-spacing: -0.005em;
+        max-width: 56ch;
+      }
 
       .tn-modal-meta {
-        display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 24px;
-        padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+        display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px 28px;
+        padding: 22px 0;
+        border-top: 1px solid var(--hairline);
+        border-bottom: 1px solid var(--hairline);
       }
-      .tn-modal-meta > div { display: flex; flex-direction: column; gap: 3px; }
+      .tn-modal-meta > div { display: flex; flex-direction: column; gap: 4px; }
       .tn-modal-meta .label {
-        font-size: 11px; color: var(--ink-mute); text-transform: uppercase;
-        letter-spacing: 0.08em; font-weight: 600;
+        font-size: 10px; color: var(--ink-faint);
+        text-transform: uppercase;
+        letter-spacing: 0.14em; font-weight: 600;
       }
-      .tn-modal-meta .value { font-size: 15px; color: var(--ink); font-weight: 500; }
+      .tn-modal-meta .value {
+        font-size: 15px; color: var(--ink); font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.005em;
+      }
 
-      .tn-pyr-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-      .tn-pyr-col { display: flex; flex-direction: column; gap: 6px; }
+      .tn-pyr-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+      .tn-pyr-col { display: flex; flex-direction: column; gap: 7px; }
       .tn-pyr-h {
-        font-size: 11px; color: var(--blue-press); text-transform: uppercase;
-        letter-spacing: 0.08em; font-weight: 600;
-        padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px;
+        font-size: 10px; color: var(--ink-faint);
+        text-transform: uppercase;
+        letter-spacing: 0.14em; font-weight: 600;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--hairline);
+        margin-bottom: 6px;
       }
-      .tn-pyr-col li { font-size: 13.5px; color: var(--ink-soft); list-style: none; line-height: 1.45; }
+      .tn-pyr-col li {
+        font-family: var(--font-serif);
+        font-size: 14.5px;
+        font-style: italic;
+        color: var(--ink-soft); list-style: none; line-height: 1.5;
+        letter-spacing: -0.005em;
+      }
 
       .tn-reason {
-        background: var(--blue-soft); border-radius: 14px; padding: 18px 20px;
+        background: var(--bg-paper);
+        border: 1px solid var(--hairline);
+        border-radius: 14px;
+        padding: 22px 24px;
+        position: relative;
+      }
+      .tn-reason::before {
+        content: ""; position: absolute; top: 22px; left: 0;
+        width: 3px; height: 26px; border-radius: 0 3px 3px 0;
+        background: var(--blue);
       }
       .tn-reason .label {
-        font-size: 11px; color: var(--blue-press); text-transform: uppercase;
-        letter-spacing: 0.08em; font-weight: 600; margin-bottom: 8px;
+        font-size: 10px; color: var(--blue-deep);
+        text-transform: uppercase;
+        letter-spacing: 0.14em; font-weight: 600;
+        margin-bottom: 10px;
         display: flex; align-items: center; gap: 6px;
       }
       .tn-reason p {
-        font-size: 14.5px; color: var(--ink); line-height: 1.55;
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 15.5px; color: var(--ink); line-height: 1.6;
+        letter-spacing: -0.005em;
       }
 
-      .tn-modal-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+      .tn-modal-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
       .tn-btn {
         display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-        padding: 12px 20px; border-radius: 12px; font-size: 14px; font-weight: 500;
-        transition: all 0.18s ease;
+        padding: 13px 22px; border-radius: 999px;
+        font-size: 14px; font-weight: 500;
+        letter-spacing: -0.005em;
+        transition: background 0.22s ease, color 0.22s ease, transform 0.28s cubic-bezier(0.22,1,0.36,1),
+                    box-shadow 0.28s ease, border-color 0.22s ease;
       }
       .tn-btn-primary {
         background: var(--ink); color: #fff;
-        box-shadow: 0 4px 14px rgba(10,15,31,0.20);
+        box-shadow: var(--shadow-2);
       }
-      .tn-btn-primary:hover { background: #1F2540; transform: translateY(-1px); }
+      .tn-btn-primary:hover {
+        background: var(--bg-deep);
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-3);
+      }
       .tn-btn-ghost {
-        background: var(--bg-soft); color: var(--ink);
+        background: transparent; color: var(--ink);
+        border: 1px solid var(--hairline);
       }
-      .tn-btn-ghost:hover { background: var(--blue-soft); color: var(--blue-press); }
-      .tn-btn-ghost.on { background: var(--blue); color: #fff; }
+      .tn-btn-ghost:hover { border-color: var(--ink); background: var(--ink); color: #fff; }
+      .tn-btn-ghost.on { background: var(--blue); color: #fff; border-color: var(--blue); }
+      .tn-btn-ghost.on:hover { background: var(--blue-press); border-color: var(--blue-press); }
 
       /* ─── Footer ───────────────────────────────────────────────── */
       .tn-footer {
-        margin-top: 48px; padding: 28px 0 36px;
-        border-top: 1px solid var(--line);
+        margin-top: 56px; padding: 32px 0 40px;
+        border-top: 1px solid var(--hairline);
         display: flex; justify-content: space-between; align-items: center;
-        font-size: 12.5px; color: var(--ink-mute); flex-wrap: wrap; gap: 10px;
+        font-size: 12px;
+        color: var(--ink-faint);
+        flex-wrap: wrap; gap: 12px;
+        letter-spacing: 0.02em;
+      }
+      .tn-footer em {
+        font-family: var(--font-serif); font-style: italic;
+        color: var(--ink-mute); font-weight: 500;
       }
       .tn-footer .dot {
-        display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-        background: var(--blue); margin: 0 8px; vertical-align: 2px;
+        display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+        background: var(--blue); margin: 0 10px; vertical-align: 2px;
       }
 
       /* ─── Catálogo ─────────────────────────────────────────────── */
       .tn-title-compact {
-        font-size: clamp(44px, 5.5vw, 76px);
+        font-size: clamp(42px, 5.4vw, 78px);
         max-width: 14ch;
+        letter-spacing: -0.04em;
       }
 
       .tn-cat-bar {
@@ -1377,24 +2767,30 @@ function ThemeStyles() {
       .tn-cat-search-wrap {
         position: relative;
         display: flex; align-items: center;
-        background: var(--bg-soft);
-        border-radius: 12px;
-        padding: 0 12px;
-        transition: background 0.15s ease, box-shadow 0.15s ease;
+        background: var(--bg-paper);
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
+        padding: 0 16px;
+        transition: background 0.2s ease, box-shadow 0.22s ease, border-color 0.22s ease;
       }
       .tn-cat-search-wrap:focus-within {
         background: var(--bg);
-        box-shadow: 0 0 0 1.5px var(--blue), 0 4px 14px rgba(79,181,232,0.12);
+        border-color: var(--blue);
+        box-shadow: 0 0 0 4px var(--blue-glow);
       }
       .tn-cat-search-wrap > svg { color: var(--ink-mute); flex-shrink: 0; }
       .tn-cat-search {
         width: 100%;
         border: 0; outline: 0; background: transparent;
-        padding: 14px 6px 14px 10px;
+        padding: 13px 6px 13px 10px;
         font-size: 15px; color: var(--ink);
-        letter-spacing: -0.005em;
+        letter-spacing: -0.008em;
       }
-      .tn-cat-search::placeholder { color: var(--ink-mute); }
+      .tn-cat-search::placeholder {
+        color: var(--ink-faint);
+        font-style: italic;
+        font-family: var(--font-serif);
+      }
       .tn-cat-search-clear {
         width: 24px; height: 24px; border-radius: 50%;
         display: inline-flex; align-items: center; justify-content: center;
@@ -1405,25 +2801,25 @@ function ThemeStyles() {
 
       .tn-cat-sort {
         display: inline-flex; align-items: center; gap: 4px;
-        background: var(--bg-soft);
-        border-radius: 12px;
+        background: var(--bg-paper);
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
         padding: 4px;
       }
       .tn-cat-sort-label {
-        font-size: 11px; font-weight: 600; color: var(--ink-mute);
-        text-transform: uppercase; letter-spacing: 0.08em;
-        padding: 0 10px 0 8px;
+        font-size: 10px; font-weight: 600; color: var(--ink-faint);
+        text-transform: uppercase; letter-spacing: 0.14em;
+        padding: 0 12px 0 10px;
       }
       .tn-cat-sort-btn {
         font-size: 13px; font-weight: 500;
         color: var(--ink-mute);
-        padding: 8px 12px; border-radius: 9px;
-        transition: background 0.15s ease, color 0.15s ease;
+        padding: 8px 14px; border-radius: 999px;
+        transition: background 0.2s ease, color 0.2s ease;
       }
       .tn-cat-sort-btn:hover { color: var(--ink); }
       .tn-cat-sort-btn.on {
-        background: var(--bg); color: var(--ink);
-        box-shadow: 0 1px 2px rgba(10,15,31,0.06);
+        background: var(--ink); color: #fff;
       }
 
       .tn-cat-filters {
@@ -1439,20 +2835,25 @@ function ThemeStyles() {
       }
       .tn-cat-filter-row { min-width: 0; }
       .tn-cat-filter-label {
-        font-size: 11px; font-weight: 600; color: var(--ink-mute);
-        text-transform: uppercase; letter-spacing: 0.08em;
-        margin-bottom: 10px;
+        font-size: 10px; font-weight: 600; color: var(--ink-faint);
+        text-transform: uppercase; letter-spacing: 0.14em;
+        margin-bottom: 12px;
       }
       .tn-cat-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
       .tn-cat-meta {
-        margin-top: 32px; padding: 18px 0;
-        border-top: 1px solid var(--line);
+        margin-top: 36px; padding: 18px 0;
+        border-top: 1px solid var(--hairline);
         display: flex; justify-content: space-between; align-items: center;
-        font-size: 14px; color: var(--ink); flex-wrap: wrap; gap: 12px;
+        font-size: 13.5px; color: var(--ink-soft); flex-wrap: wrap; gap: 12px;
+        letter-spacing: -0.003em;
       }
       .tn-cat-meta-l { display: inline-flex; gap: 6px; flex-wrap: wrap; }
-      .tn-cat-meta b { font-weight: 600; }
+      .tn-cat-meta b {
+        font-family: var(--font-serif); font-style: italic; font-weight: 500;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
 
       /* ─── Paginación ───────────────────────────────────────────── */
       .tn-pagination {
@@ -1461,27 +2862,31 @@ function ThemeStyles() {
         gap: 6px; flex-wrap: wrap;
       }
       .tn-pag-btn {
-        min-width: 38px; height: 38px;
-        padding: 0 12px;
-        border-radius: 10px;
+        min-width: 40px; height: 40px;
+        padding: 0 14px;
+        border-radius: 999px;
         font-size: 13.5px; font-weight: 500;
-        color: var(--ink); background: var(--bg-soft);
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-soft); background: transparent;
+        border: 1px solid transparent;
         display: inline-flex; align-items: center; justify-content: center;
-        transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+        transition: background 0.22s ease, color 0.22s ease,
+                    border-color 0.22s ease, transform 0.28s cubic-bezier(0.22,1,0.36,1);
       }
       .tn-pag-btn:hover:not(:disabled):not(.on) {
-        background: var(--blue-soft); color: var(--blue-press);
+        color: var(--ink); border-color: var(--hairline);
+        transform: translateY(-1px);
       }
-      .tn-pag-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+      .tn-pag-btn:disabled { opacity: 0.3; cursor: not-allowed; }
       .tn-pag-btn.on {
-        background: var(--ink); color: #fff;
-        box-shadow: 0 2px 8px rgba(10,15,31,0.18);
+        background: var(--ink); color: #fff; border-color: var(--ink);
+        box-shadow: var(--shadow-2);
       }
       .tn-pag-arrow { color: var(--ink-mute); }
       .tn-pag-ellipsis {
-        min-width: 26px; height: 38px;
+        min-width: 26px; height: 40px;
         display: inline-flex; align-items: center; justify-content: center;
-        color: var(--ink-mute); font-size: 14px; user-select: none;
+        color: var(--ink-faint); font-size: 14px; user-select: none;
       }
 
       /* ─── Responsive ───────────────────────────────────────────── */
@@ -1524,6 +2929,17 @@ function ThemeStyles() {
       *:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
       .tn-composer input:focus-visible { outline: none; }
 
+      /* Respeta usuarios con reduced-motion */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+        .tn-title em::after { animation: none; transform: scaleX(1); opacity: 1; }
+        .tn-heart.on { animation: none; }
+      }
+
       /* Scrollbar */
       ::-webkit-scrollbar { width: 10px; height: 10px; }
       ::-webkit-scrollbar-track { background: transparent; }
@@ -1536,41 +2952,585 @@ function ThemeStyles() {
 /* ============================================================
    HEADER
    ============================================================ */
-function Header({ view, setView, favoritesCount, historyCount, onToggleFilters }) {
+function Header({
+  view, setView, favoritesCount, historyCount,
+  user, onAvatarClick, profileOpen, onCloseProfile, onLogout,
+  onSwitchToLogin, onSwitchToSignup, onEditProfile, onDeleteAccount,
+}) {
+  const NAV_ITEMS = [
+    { k: 'search',  l: 'Buscar' },
+    { k: 'catalog', l: 'Catálogo' },
+    { k: 'archive', l: 'Guardados' },
+  ];
+  const HeaderShell = motion ? motion.header : 'header';
+  const headerMotion = motion ? {
+    initial: { y: -20, opacity: 0 },
+    animate: { y: 0, opacity: 1 },
+    transition: { duration: 0.7, ease: EASE_CINE },
+  } : {};
   return (
-    <header className="tn-header">
+    <HeaderShell className="tn-header" {...headerMotion}>
       <div className="tn-head">
-        <button className="tn-brand" onClick={() => setView('search')}>
-          <span className="tn-brand-dot" />
-          topnote
+        <button className="tn-brand" onClick={() => setView('search')} aria-label="Top Note · inicio">
+          <img className="tn-brand-logo" src="assets/logo.png" alt="" aria-hidden="true" />
+          <span className="tn-brand-word">Top <em>Note</em></span>
         </button>
         <nav className="tn-nav">
-          <button className={view === 'search' ? 'on' : ''} onClick={() => setView('search')}>
-            Buscar
-          </button>
-          <button className={view === 'catalog' ? 'on' : ''} onClick={() => setView('catalog')}>
-            Catálogo
-          </button>
-          <button className={view === 'results' ? 'on' : ''} onClick={() => setView('results')}>
-            Resultados
-          </button>
-          <button className={view === 'archive' ? 'on' : ''} onClick={() => setView('archive')}>
-            Guardados
-            {favoritesCount > 0 && <span className="pip">{favoritesCount}</span>}
-          </button>
+          {NAV_ITEMS.map((it) => {
+            const active = view === it.k;
+            return (
+              <button
+                key={it.k}
+                className={active ? 'on' : ''}
+                onClick={() => setView(it.k)}
+              >
+                {active && motion && (
+                  <motion.span
+                    layoutId="tn-nav-indicator"
+                    className="tn-nav-ind"
+                    transition={{ type: 'spring', stiffness: 360, damping: 30 }}
+                  />
+                )}
+                <span className="tn-nav-label">{it.l}</span>
+                {it.k === 'archive' && favoritesCount > 0 && (
+                  <span className="pip">{favoritesCount}</span>
+                )}
+              </button>
+            );
+          })}
         </nav>
         <div className="tn-head-r">
-          <button className="tn-iconbtn" title="Filtros" onClick={onToggleFilters}>
-            <SvgFilter />
-          </button>
           <button className="tn-iconbtn" title="Historial" onClick={() => setView('archive')}>
             <Clock size={18} />
             {historyCount > 0 && <span className="badge-num">{historyCount}</span>}
           </button>
-          <div className="tn-av">A</div>
+          <div className="tn-av-wrap">
+            <button
+              className={'tn-av' + (user ? ' on' : '')}
+              onClick={onAvatarClick}
+              aria-label={user ? `Perfil de ${user.name}` : 'Iniciar sesión'}
+              aria-expanded={!!profileOpen}
+              style={user ? { background: avatarGradient(user.email) } : undefined}
+            >
+              {user
+                ? (user.name || user.email || '?').trim().charAt(0).toUpperCase()
+                : <SvgUser />}
+            </button>
+            {profileOpen && user && (
+              <ProfileMenu
+                user={user}
+                favoritesCount={favoritesCount}
+                historyCount={historyCount}
+                onLogout={onLogout}
+                onClose={onCloseProfile}
+                onGoArchive={() => { onCloseProfile(); setView('archive'); }}
+                onEdit={onEditProfile}
+                onDelete={onDeleteAccount}
+              />
+            )}
+            {!user && (
+              <span className="tn-av-tip" aria-hidden="true">Acceder</span>
+            )}
+          </div>
         </div>
       </div>
-    </header>
+    </HeaderShell>
+  );
+}
+
+/* ============================================================
+   PROFILE MENU — dropdown del avatar.
+   ============================================================ */
+function ProfileMenu({ user, favoritesCount, historyCount, onLogout, onClose, onGoArchive, onEdit, onDelete }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) onClose();
+    };
+    // setTimeout para no capturar el mismo click que abrió el menú
+    const t = setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', onDocClick); };
+  }, [onClose]);
+
+  const memberSince = user.createdAt
+    ? new Date(user.createdAt).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
+    : '—';
+  const initial = (user.name || user.email || '?').trim().charAt(0).toUpperCase();
+
+  const Shell = motion ? motion.div : 'div';
+  const motionProps = motion ? {
+    initial: { opacity: 0, y: -8, scale: 0.97 },
+    animate: { opacity: 1, y: 0, scale: 1 },
+    exit: { opacity: 0, y: -6, scale: 0.97 },
+    transition: { duration: 0.22, ease: EASE_CINE },
+  } : {};
+
+  return (
+    <Shell ref={ref} className="tn-pm" {...motionProps} role="menu">
+      <div className="tn-pm-head">
+        <div className="tn-pm-av" style={{ background: avatarGradient(user.email) }}>{initial}</div>
+        <div className="tn-pm-id">
+          <div className="tn-pm-name">{user.name}</div>
+          <div className="tn-pm-email">{user.email}</div>
+        </div>
+      </div>
+      <div className="tn-pm-stats">
+        <div>
+          <span className="tn-pm-stat-v">{favoritesCount}</span>
+          <span className="tn-pm-stat-l">Guardados</span>
+        </div>
+        <div>
+          <span className="tn-pm-stat-v">{historyCount}</span>
+          <span className="tn-pm-stat-l">Búsquedas</span>
+        </div>
+        <div>
+          <span className="tn-pm-stat-v" style={{ fontSize: 14, fontStyle: 'italic', fontFamily: 'var(--font-serif)' }}>
+            {memberSince}
+          </span>
+          <span className="tn-pm-stat-l">Miembro desde</span>
+        </div>
+      </div>
+      <div className="tn-pm-actions">
+        <button className="tn-pm-btn" onClick={onGoArchive}>
+          Ver mi colección <SvgArrowRightThick size={13} />
+        </button>
+        <button className="tn-pm-btn ghost" onClick={onEdit}>
+          Editar perfil
+        </button>
+        <button className="tn-pm-btn ghost" onClick={onLogout}>
+          Cerrar sesión
+        </button>
+        <div className="tn-pm-sep" />
+        <button className="tn-pm-btn ghost danger" onClick={onDelete}>
+          Eliminar cuenta
+        </button>
+      </div>
+    </Shell>
+  );
+}
+
+/* ============================================================
+   AUTH MODAL — login / signup (mock, localStorage).
+   ============================================================ */
+function AuthModal({ mode, setMode, onSuccess, onClose }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [gender, setGender] = useState(null); // 'masculino' | 'femenino' | null
+  const [showPass, setShowPass] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const isSignup = mode === 'signup';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const session = isSignup
+        ? await signupAccount({ name, email, password, gender })
+        : await loginAccount({ email, password });
+      onSuccess(session, isSignup ? 'signup' : 'login');
+    } catch (err) {
+      setError(err.message || 'Algo ha ido mal.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const BgEl = motion ? motion.div : 'div';
+  const PanelEl = motion ? motion.div : 'div';
+  const bgMotion = motion ? {
+    initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 },
+    transition: { duration: 0.22, ease: EASE_CINE },
+  } : {};
+  const panelMotion = motion ? {
+    initial: { opacity: 0, y: 24, scale: 0.97 },
+    animate: { opacity: 1, y: 0, scale: 1 },
+    exit: { opacity: 0, y: 18, scale: 0.97 },
+    transition: { duration: 0.4, ease: EASE_CINE },
+  } : {};
+
+  return (
+    <BgEl className="tn-modal-bg tn-auth-bg" onClick={onClose} {...bgMotion}>
+      <PanelEl
+        className="tn-auth"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true"
+        {...panelMotion}
+      >
+        <button className="tn-modal-close" onClick={onClose} aria-label="Cerrar">
+          <X size={18} />
+        </button>
+
+        <div className="tn-auth-head">
+          <img src="assets/logo.png" alt="" aria-hidden="true" className="tn-auth-logo" />
+          <h2 className="tn-auth-title">
+            {isSignup ? <>Crea tu <em>cuenta.</em></> : <>Bienvenido de <em>vuelta.</em></>}
+          </h2>
+          <p className="tn-auth-sub">
+            {isSignup
+              ? 'Guarda tus favoritos y tu historial olfativo.'
+              : 'Accede a tu colección y búsquedas anteriores.'}
+          </p>
+        </div>
+
+        <div className="tn-auth-tabs">
+          <button
+            className={'tn-auth-tab' + (!isSignup ? ' on' : '')}
+            onClick={() => { setMode('login'); setError(null); }}
+            type="button"
+          >Iniciar sesión</button>
+          <button
+            className={'tn-auth-tab' + (isSignup ? ' on' : '')}
+            onClick={() => { setMode('signup'); setError(null); }}
+            type="button"
+          >Crear cuenta</button>
+          <span className={'tn-auth-tab-ind' + (isSignup ? ' right' : '')} />
+        </div>
+
+        <form className="tn-auth-form" onSubmit={submit} noValidate>
+          {isSignup && (
+            <label className="tn-auth-field">
+              <span className="tn-auth-label">Nombre</span>
+              <input
+                type="text" value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
+                placeholder="Tu nombre"
+                disabled={busy}
+                autoFocus
+              />
+            </label>
+          )}
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Email</span>
+            <input
+              type="email" value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              placeholder="tu@email.com"
+              disabled={busy}
+              autoFocus={!isSignup}
+            />
+          </label>
+          {isSignup && (
+            <div className="tn-auth-field">
+              <span className="tn-auth-label">
+                Tu fragancia · personaliza las recomendaciones
+              </span>
+              <div className="tn-gender-picker">
+                {[
+                  { value: 'masculino', label: 'Masculina' },
+                  { value: 'femenino',  label: 'Femenina' },
+                  { value: null,        label: 'Sin preferencia' },
+                ].map((opt) => (
+                  <button
+                    key={String(opt.value)}
+                    type="button"
+                    className={'tn-gender-opt' + (gender === opt.value ? ' on' : '')}
+                    onClick={() => setGender(opt.value)}
+                    disabled={busy}
+                  >{opt.label}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Contraseña</span>
+            <div className="tn-auth-pass">
+              <input
+                type={showPass ? 'text' : 'password'} value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={isSignup ? 'new-password' : 'current-password'}
+                placeholder={isSignup ? 'Mínimo 6 caracteres' : '••••••••'}
+                disabled={busy}
+                minLength={6}
+              />
+              <button
+                type="button"
+                className="tn-auth-pass-toggle"
+                onClick={() => setShowPass((s) => !s)}
+                aria-label={showPass ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showPass ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
+          </label>
+
+          {error && (
+            <div className="tn-auth-err">{error}</div>
+          )}
+
+          <button type="submit" className="tn-auth-submit" disabled={busy}>
+            {busy ? 'Procesando…' : (isSignup ? 'Crear cuenta' : 'Iniciar sesión')}
+            {!busy && <SvgArrowRightThick size={14} />}
+          </button>
+
+          <p className="tn-auth-switch">
+            {isSignup
+              ? <>¿Ya tienes cuenta? <button type="button" onClick={() => { setMode('login'); setError(null); }}>Inicia sesión</button></>
+              : <>¿Aún no tienes cuenta? <button type="button" onClick={() => { setMode('signup'); setError(null); }}>Crea una</button></>}
+          </p>
+
+          <p className="tn-auth-note">
+            Tus datos viajan cifrados a tu servidor de Top Note (NestJS + Supabase).
+          </p>
+        </form>
+      </PanelEl>
+    </BgEl>
+  );
+}
+
+/* ============================================================
+   EDIT PROFILE MODAL
+   ============================================================ */
+function EditProfileModal({ user, onSaved, onClose }) {
+  const [name, setName] = useState(user.name || '');
+  const [email, setEmail] = useState(user.email || '');
+  const [gender, setGender] = useState(user.gender ?? null);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const nameChanged   = name.trim() !== (user.name || '').trim();
+  const emailChanged  = email.trim().toLowerCase() !== (user.email || '').trim().toLowerCase();
+  const passChanged   = newPassword.length > 0;
+  const genderChanged = (gender ?? null) !== (user.gender ?? null);
+  const sensitive     = emailChanged || passChanged;
+  const dirty         = nameChanged || emailChanged || passChanged || genderChanged;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy || !dirty) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const patch = {};
+      if (nameChanged)   patch.name = name.trim();
+      if (emailChanged)  patch.email = email.trim().toLowerCase();
+      if (passChanged)   patch.newPassword = newPassword;
+      if (genderChanged) patch.gender = gender;
+      if (sensitive)     patch.currentPassword = currentPassword;
+      const updated = await apiUpdateProfile(patch);
+      onSaved(updated);
+    } catch (err) {
+      setError(err.message || 'No se ha podido actualizar el perfil.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const BgEl = motion ? motion.div : 'div';
+  const PanelEl = motion ? motion.div : 'div';
+  const bgMotion = motion ? {
+    initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 },
+    transition: { duration: 0.22, ease: EASE_CINE },
+  } : {};
+  const panelMotion = motion ? {
+    initial: { opacity: 0, y: 24, scale: 0.97 },
+    animate: { opacity: 1, y: 0, scale: 1 },
+    exit: { opacity: 0, y: 18, scale: 0.97 },
+    transition: { duration: 0.4, ease: EASE_CINE },
+  } : {};
+
+  return (
+    <BgEl className="tn-modal-bg tn-auth-bg" onClick={onClose} {...bgMotion}>
+      <PanelEl
+        className="tn-auth"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true"
+        {...panelMotion}
+      >
+        <button className="tn-modal-close" onClick={onClose} aria-label="Cerrar">
+          <X size={18} />
+        </button>
+
+        <div className="tn-auth-head">
+          <div className="tn-auth-av" style={{ background: avatarGradient(user.email) }}>
+            {(user.name || user.email || '?').charAt(0).toUpperCase()}
+          </div>
+          <h2 className="tn-auth-title">
+            Editar <em>perfil.</em>
+          </h2>
+          <p className="tn-auth-sub">
+            Cambios sensibles (email, contraseña) requieren tu contraseña actual.
+          </p>
+        </div>
+
+        <form className="tn-auth-form" onSubmit={submit} noValidate>
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Nombre</span>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                   autoComplete="name" disabled={busy} />
+          </label>
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Email</span>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                   autoComplete="email" disabled={busy} />
+          </label>
+          <div className="tn-auth-field">
+            <span className="tn-auth-label">
+              Tu fragancia · personaliza las recomendaciones
+            </span>
+            <div className="tn-gender-picker">
+              {[
+                { value: 'masculino', label: 'Masculina' },
+                { value: 'femenino',  label: 'Femenina' },
+                { value: null,        label: 'Sin preferencia' },
+              ].map((opt) => (
+                <button
+                  key={String(opt.value)}
+                  type="button"
+                  className={'tn-gender-opt' + ((gender ?? null) === opt.value ? ' on' : '')}
+                  onClick={() => setGender(opt.value)}
+                  disabled={busy}
+                >{opt.label}</button>
+              ))}
+            </div>
+          </div>
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Nueva contraseña <span style={{opacity:0.6,fontWeight:500,letterSpacing:0}}>(opcional)</span></span>
+            <div className="tn-auth-pass">
+              <input
+                type={showPass ? 'text' : 'password'}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+                placeholder="Mínimo 6 caracteres"
+                disabled={busy}
+              />
+              <button type="button" className="tn-auth-pass-toggle"
+                      onClick={() => setShowPass((s) => !s)}>
+                {showPass ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
+          </label>
+
+          {sensitive && (
+            <label className="tn-auth-field">
+              <span className="tn-auth-label">Confirma con tu contraseña actual</span>
+              <input
+                type="password" value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Contraseña actual"
+                disabled={busy}
+                required
+              />
+            </label>
+          )}
+
+          {error && <div className="tn-auth-err">{error}</div>}
+
+          <button type="submit" className="tn-auth-submit" disabled={busy || !dirty}>
+            {busy ? 'Guardando…' : 'Guardar cambios'}
+            {!busy && <SvgArrowRightThick size={14} />}
+          </button>
+        </form>
+      </PanelEl>
+    </BgEl>
+  );
+}
+
+/* ============================================================
+   DELETE ACCOUNT MODAL — confirmación destructiva
+   ============================================================ */
+function DeleteAccountModal({ user, onDeleted, onClose }) {
+  const [password, setPassword] = useState('');
+  const [confirmText, setConfirmText] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const canDelete = password.length > 0 && confirmText === 'ELIMINAR';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy || !canDelete) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await apiDeleteAccount(password);
+      await onDeleted();
+    } catch (err) {
+      setError(err.message || 'No se ha podido eliminar la cuenta.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const BgEl = motion ? motion.div : 'div';
+  const PanelEl = motion ? motion.div : 'div';
+  const bgMotion = motion ? {
+    initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 },
+    transition: { duration: 0.22, ease: EASE_CINE },
+  } : {};
+  const panelMotion = motion ? {
+    initial: { opacity: 0, y: 24, scale: 0.97 },
+    animate: { opacity: 1, y: 0, scale: 1 },
+    exit: { opacity: 0, y: 18, scale: 0.97 },
+    transition: { duration: 0.4, ease: EASE_CINE },
+  } : {};
+
+  return (
+    <BgEl className="tn-modal-bg tn-auth-bg" onClick={onClose} {...bgMotion}>
+      <PanelEl
+        className="tn-auth tn-auth-danger"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true"
+        {...panelMotion}
+      >
+        <button className="tn-modal-close" onClick={onClose} aria-label="Cerrar">
+          <X size={18} />
+        </button>
+
+        <div className="tn-auth-head">
+          <h2 className="tn-auth-title">
+            Eliminar <em>cuenta.</em>
+          </h2>
+          <p className="tn-auth-sub">
+            Esta acción borra permanentemente tu cuenta, tus favoritos y tu historial.
+            <br />No se puede deshacer.
+          </p>
+        </div>
+
+        <div className="tn-auth-callout">
+          <span className="tn-auth-callout-label">Cuenta</span>
+          <span className="tn-auth-callout-value">{user.email}</span>
+        </div>
+
+        <form className="tn-auth-form" onSubmit={submit} noValidate>
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Contraseña</span>
+            <input type="password" value={password}
+                   onChange={(e) => setPassword(e.target.value)}
+                   autoComplete="current-password"
+                   placeholder="Tu contraseña actual"
+                   disabled={busy} required />
+          </label>
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Escribe <code>ELIMINAR</code> para confirmar</span>
+            <input type="text" value={confirmText}
+                   onChange={(e) => setConfirmText(e.target.value)}
+                   placeholder="ELIMINAR"
+                   disabled={busy}
+                   spellCheck={false}
+                   autoCorrect="off"
+                   autoCapitalize="characters" />
+          </label>
+
+          {error && <div className="tn-auth-err">{error}</div>}
+
+          <button type="submit" className="tn-auth-submit danger" disabled={busy || !canDelete}>
+            {busy ? 'Eliminando…' : 'Eliminar mi cuenta para siempre'}
+          </button>
+        </form>
+      </PanelEl>
+    </BgEl>
   );
 }
 
@@ -1609,13 +3569,9 @@ function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filter
     <main className="tn-main">
       <section className="tn-hero tn-hero--home">
         <Stagger className="tn-hero-left" gap={0.11} duration={1.05} y={56}>
-          <span className="tn-pill">
-            <span className="dot" />
-            IA · En línea
-          </span>
-          <h1 className="tn-title">
+          <WordStaggerTitle className="tn-title" delay={0.15}>
             Encuentra tu <em>aroma.</em>
-          </h1>
+          </WordStaggerTitle>
           <p className="tn-sub">
             Describe lo que buscas en lenguaje natural. Cruzamos {fmtInt(CATALOG.length)} fragancias del
             catálogo y devolvemos las más afines, con justificación.
@@ -1658,26 +3614,7 @@ function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filter
                 </button>
               );
             })}
-            <button
-              className={'tn-tag icon' + (showFilters ? ' act' : '')}
-              onClick={() => setShowFilters(!showFilters)}
-              type="button"
-              aria-expanded={showFilters}
-            >
-              <SvgFilter size={13} stroke={2} /> Filtros
-              {activeFilterCount > 0 && (
-                <span style={{
-                  marginLeft: 4, background: showFilters ? '#fff' : 'var(--blue)',
-                  color: showFilters ? 'var(--ink)' : '#fff',
-                  fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 999,
-                }}>{activeFilterCount}</span>
-              )}
-            </button>
           </div>
-
-          {showFilters && (
-            <FilterPanel filters={filters} setFilters={setFilters} />
-          )}
 
           {error && (
             <div className="tn-error">
@@ -1976,78 +3913,85 @@ function HeroBottle3D() {
     btl.add(capMesh);
     toDispose.push(capGeo);
 
-    // ── Etiqueta estilo Tom Ford: rectángulo marfil con marco dorado,
-    //    serif elegante en mayúsculas, descriptor abajo, líneas decorativas.
+    // ── Etiqueta editorial: paper claro, marco dorado fino, tipografía
+    //    Playfair Display alineada con el sistema del sitio.
     const labelTex = (() => {
       const cw = 1024, ch = 768;
       const c = document.createElement('canvas');
       c.width = cw; c.height = ch;
       const ctx = c.getContext('2d');
+
+      // Paleta heredada del sistema CSS de la página
+      const PAPER     = '#FAF6EE';   // bg-paper cálido
+      const PAPER_SH  = 'rgba(75, 60, 30, 0.10)';
+      const INK       = '#0B0F19';
+      const INK_DEEP  = '#1B4D6E';   // blue-deep, para el italic Note
+      const GOLD      = '#A78B5E';   // gold sutil (no chillón)
+      const GOLD_DEEP = '#7C633F';
+
       ctx.clearRect(0, 0, cw, ch);
 
-      // Fondo marfil cálido
-      ctx.fillStyle = '#EFE7D6';
+      // Fondo paper cálido
+      ctx.fillStyle = PAPER;
       ctx.fillRect(0, 0, cw, ch);
 
-      // Sombras internas suaves (lados)
+      // Vignette lateral muy sutil (textura impresa)
       const sideShade = ctx.createLinearGradient(0, 0, cw, 0);
-      sideShade.addColorStop(0,   'rgba(110, 85, 40, 0.15)');
+      sideShade.addColorStop(0,   PAPER_SH);
       sideShade.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
-      sideShade.addColorStop(1,   'rgba(110, 85, 40, 0.15)');
+      sideShade.addColorStop(1,   PAPER_SH);
       ctx.fillStyle = sideShade;
       ctx.fillRect(0, 0, cw, ch);
 
-      // Marco dorado brillante — grueso para que se vea a la escala del frasco
-      const FRAME = '#D4A937';
-      ctx.strokeStyle = FRAME;
-      ctx.lineWidth = 14;
-      ctx.strokeRect(28, 28, cw - 56, ch - 56);
-      ctx.lineWidth = 5;
-      ctx.strokeRect(58, 58, cw - 116, ch - 116);
+      // Marco doble fino — dorado desaturado, más editorial que cinematográfico
+      ctx.strokeStyle = GOLD;
+      ctx.lineWidth = 6;
+      ctx.strokeRect(40, 40, cw - 80, ch - 80);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = GOLD_DEEP;
+      ctx.strokeRect(60, 60, cw - 120, ch - 120);
 
-      // Líneas decorativas horizontales con diamante central
-      const orn = (cy) => {
-        ctx.strokeStyle = FRAME;
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.moveTo(cw * 0.28, cy);
-        ctx.lineTo(cw * 0.44, cy);
-        ctx.moveTo(cw * 0.56, cy);
-        ctx.lineTo(cw * 0.72, cy);
-        ctx.stroke();
-        // Diamante central (más grande)
-        ctx.beginPath();
-        ctx.moveTo(cw * 0.50, cy - 16);
-        ctx.lineTo(cw * 0.50 + 16, cy);
-        ctx.lineTo(cw * 0.50, cy + 16);
-        ctx.lineTo(cw * 0.50 - 16, cy);
-        ctx.closePath();
-        ctx.fillStyle = FRAME;
-        ctx.fill();
-      };
-      orn(178);
-      orn(ch - 178);
-
-      // Título serif TOPNOTE en mayúsculas, color marrón profundo
-      ctx.fillStyle = '#2A1E0A';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = '700 162px "Times New Roman", "Georgia", serif';
-      ctx.fillText('TOPNOTE', cw / 2, ch / 2 - 30);
+      // Helper para simular letter-spacing (caracter a caracter)
+      const drawTracked = (text, x, y, spacing) => {
+        const widths = [];
+        let total = 0;
+        for (const ch_ of text) {
+          const w = ctx.measureText(ch_).width;
+          widths.push(w);
+          total += w + spacing;
+        }
+        total -= spacing;
+        let cursor = x - total / 2;
+        for (let i = 0; i < text.length; i++) {
+          ctx.fillText(text[i], cursor + widths[i] / 2, y);
+          cursor += widths[i] + spacing;
+        }
+      };
 
-      // Subtítulo
-      ctx.font = '500 46px "Times New Roman", "Georgia", serif';
-      ctx.letterSpacing = '8px';
-      ctx.fillStyle = '#5A4218';
-      ctx.fillText('FRAGRANCE  GUIDE', cw / 2, ch / 2 + 90);
+      // Title — Playfair Display, "Top" regular + "Note" italic
+      const TITLE_Y = ch / 2 - 10;
+      ctx.fillStyle = INK;
+      ctx.font = '500 180px "Playfair Display", "Times New Roman", Georgia, serif';
+      const topW  = ctx.measureText('Top').width;
+      const space = ctx.measureText(' ').width;
+      ctx.font = '500 italic 180px "Playfair Display", "Times New Roman", Georgia, serif';
+      const noteW = ctx.measureText('Note').width;
+      const totalW = topW + space + noteW;
+      const startX = (cw - totalW) / 2;
+      ctx.textAlign = 'left';
+      ctx.font = '500 180px "Playfair Display", "Times New Roman", Georgia, serif';
+      ctx.fillText('Top', startX, TITLE_Y);
+      ctx.fillStyle = INK_DEEP;
+      ctx.font = '500 italic 180px "Playfair Display", "Times New Roman", Georgia, serif';
+      ctx.fillText('Note', startX + topW + space, TITLE_Y);
 
-      // Línea muy fina bajo el subtítulo
-      ctx.strokeStyle = '#5A4218';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(cw * 0.36, ch / 2 + 140);
-      ctx.lineTo(cw * 0.64, ch / 2 + 140);
-      ctx.stroke();
+      // Tagline inferior — caps tracked
+      ctx.fillStyle = GOLD_DEEP;
+      ctx.textAlign = 'center';
+      ctx.font = '600 56px "Geist", "Inter", system-ui, sans-serif';
+      drawTracked('FRAGRANCE GUIDE', cw / 2, ch - 200, 14);
 
       const tex = new T.CanvasTexture(c);
       tex.encoding = T.sRGBEncoding;
@@ -2449,16 +4393,179 @@ function Bottle({ accent, body, initial, large = false }) {
    LOADING GRID
    ============================================================ */
 function LoadingGrid() {
+  return <SpraySearchLoader />;
+}
+
+/* ============================================================
+   SPRAY SEARCH LOADER v2 — el frasco realmente "rocía":
+   partículas siguen un path circular desde la boquilla y, a la vez,
+   un stroke se va dibujando detrás como rastro de spray.
+   - Path circular tangente a la boquilla (top) del frasco.
+   - 8 partículas con delays escalonados → forman un cluster en cabeza.
+   - Stroke usa stroke-dashoffset para "drawing-effect" sincronizado.
+   - El ciclo completo dura 2.4s con fade al final para reset suave.
+   ============================================================ */
+function SpraySearchLoader() {
+  const [phraseIdx, setPhraseIdx] = useState(0);
+  const PHRASES = [
+    'Destilando matices…',
+    'Cruzando notas olfativas…',
+    'Consultando al perfumista…',
+    'Refinando coincidencias…',
+  ];
+  useEffect(() => {
+    const t = setInterval(() => setPhraseIdx((i) => (i + 1) % PHRASES.length), 1800);
+    return () => clearInterval(t);
+  }, []);
+
+  // Particles: 8 con delays escalonados (negativos) para formar cluster en cabeza.
+  // Centro del path circular: (130, 145), r=95 — tangente a la boquilla en (130, 50).
+  const DUR = 2.4;            // segundos por ciclo completo
+  const DRAW = 0.75;          // % del ciclo que dura el "dibujado" (0-DRAW) antes del hold/fade
+  const PARTICLES = [
+    { r: 3.6, fill: '#4FB5E8', delay: 0,    op: 1.0 },
+    { r: 3.0, fill: '#4FB5E8', delay: -0.05, op: 0.85 },
+    { r: 2.6, fill: '#4FB5E8', delay: -0.10, op: 0.75 },
+    { r: 2.2, fill: '#7CC9F0', delay: -0.15, op: 0.65 },
+    { r: 1.9, fill: '#7CC9F0', delay: -0.20, op: 0.55 },
+    { r: 1.6, fill: '#7CC9F0', delay: -0.25, op: 0.45 },
+    { r: 1.3, fill: '#7CC9F0', delay: -0.30, op: 0.38 },
+    { r: 1.0, fill: '#7CC9F0', delay: -0.35, op: 0.30 },
+  ];
+
   return (
-    <section className="tn-grid">
-      {[0,1,2,3].map((i) => (
-        <div key={i} className="tn-card" style={{ cursor: 'default' }}>
-          <div className="tn-skel tn-skel-frame" />
-          <div className="tn-skel tn-skel-line" style={{ width: '70%' }} />
-          <div className="tn-skel tn-skel-line sm" />
-        </div>
-      ))}
-    </section>
+    <div className="tn-spray-loader" role="status" aria-live="polite">
+      <svg className="tn-spray-svg" viewBox="0 0 260 260" aria-hidden="true">
+        <defs>
+          <linearGradient id="capSteel" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="#B8C0CB" />
+            <stop offset="35%"  stopColor="#E4E8EE" />
+            <stop offset="70%"  stopColor="#8E97A4" />
+            <stop offset="100%" stopColor="#6B7480" />
+          </linearGradient>
+          <linearGradient id="bodyGlass" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stopColor="#FFFFFF" stopOpacity="0.98" />
+            <stop offset="55%"  stopColor="#FFFFFF" stopOpacity="0.86" />
+            <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.98" />
+          </linearGradient>
+          <linearGradient id="liquidGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="#7CC9F0" />
+            <stop offset="100%" stopColor="#4FB5E8" />
+          </linearGradient>
+          <clipPath id="bodyClip">
+            <path d="M 96 96 Q 96 88 104 88 L 156 88 Q 164 88 164 96 L 164 200 Q 164 208 156 208 L 104 208 Q 96 208 96 200 Z" />
+          </clipPath>
+          <filter id="bottleShadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="2" />
+          </filter>
+          {/* Path circular tangente a la boquilla del frasco. Sentido horario. */}
+          <path id="sprayPath"
+                d="M 130 50 A 95 95 0 0 1 130 240 A 95 95 0 0 1 130 50"
+                fill="none" />
+        </defs>
+
+        {/* track de fondo: círculo tenue (referencia visual del loop) */}
+        <circle cx="130" cy="145" r="95" fill="none"
+                stroke="rgba(79,181,232,0.08)" strokeWidth="1.5" />
+
+        {/* trail: stroke que se va dibujando sincronizado con las partículas */}
+        <circle cx="130" cy="145" r="95" fill="none"
+                stroke="#4FB5E8" strokeWidth="2.6"
+                strokeDasharray="100" pathLength="100"
+                strokeDashoffset="100" strokeLinecap="round"
+                transform="rotate(-90 130 145)">
+          <animate attributeName="stroke-dashoffset"
+                   values="100;0;0"
+                   keyTimes={`0;${DRAW};1`}
+                   dur={`${DUR}s`} repeatCount="indefinite" />
+          <animate attributeName="stroke-opacity"
+                   values="0.75;0.75;0"
+                   keyTimes={`0;${DRAW};1`}
+                   dur={`${DUR}s`} repeatCount="indefinite" />
+        </circle>
+
+        {/* partículas: emergen de la boquilla y siguen el path circular.
+            keyPoints sincroniza: completan el path en DRAW del ciclo, luego
+            hold + fade-out junto al stroke. */}
+        <g>
+          {PARTICLES.map((p, i) => (
+            <circle key={i} r={p.r} fill={p.fill} opacity="0">
+              <animateMotion
+                dur={`${DUR}s`}
+                begin={`${p.delay}s`}
+                repeatCount="indefinite"
+                keyTimes={`0;${DRAW};1`}
+                keyPoints="0;1;1"
+                calcMode="linear">
+                <mpath href="#sprayPath" />
+              </animateMotion>
+              <animate
+                attributeName="opacity"
+                values={`0;${p.op};${p.op};0`}
+                keyTimes={`0;0.04;${DRAW};${(DRAW + (1 - DRAW) * 0.6).toFixed(3)}`}
+                dur={`${DUR}s`}
+                begin={`${p.delay}s`}
+                repeatCount="indefinite" />
+            </circle>
+          ))}
+        </g>
+
+        {/* sombra elíptica difusa bajo el frasco */}
+        <ellipse cx="130" cy="218" rx="44" ry="5"
+                 fill="rgba(11,15,25,0.18)" filter="url(#bottleShadow)" />
+
+        {/* frasco editorial: tapa plateada + cuello + cuerpo con etiqueta marfil/dorada */}
+        <g>
+          {/* boquilla (pequeña protuberancia desde donde sale el spray) */}
+          <rect x="124" y="46" width="12" height="6" rx="1.5" fill="url(#capSteel)" />
+          {/* tapa plateada */}
+          <rect x="106" y="52" width="48" height="22" rx="2.5"
+                fill="url(#capSteel)" stroke="rgba(11,15,25,0.25)" strokeWidth="0.6" />
+          {/* brillo de la tapa */}
+          <rect x="110" y="54.5" width="5" height="2.5" rx="1" fill="rgba(255,255,255,0.7)" />
+          {/* línea inferior de la tapa */}
+          <rect x="106" y="71" width="48" height="1.5" fill="rgba(11,15,25,0.18)" />
+
+          {/* cuello */}
+          <rect x="118" y="74" width="24" height="9" fill="#9DA6B3" />
+          <rect x="118" y="74" width="24" height="1.5" fill="rgba(11,15,25,0.20)" />
+          <rect x="118" y="81.5" width="24" height="1.5" fill="rgba(11,15,25,0.15)" />
+
+          {/* cuerpo con hombros redondeados */}
+          <path d="M 96 96 Q 96 88 104 88 L 156 88 Q 164 88 164 96 L 164 200 Q 164 208 156 208 L 104 208 Q 96 208 96 200 Z"
+                fill="url(#bodyGlass)" stroke="rgba(11,15,25,0.22)" strokeWidth="0.8" />
+
+          {/* líquido recortado al cuerpo */}
+          <g clipPath="url(#bodyClip)">
+            <rect x="96" y="130" width="68" height="80" fill="url(#liquidGrad)" opacity="0.45" />
+            <rect x="96" y="130" width="68" height="2.5" fill="rgba(124,201,240,0.85)" />
+          </g>
+
+          {/* etiqueta editorial */}
+          <rect x="104" y="148" width="52" height="44" rx="1"
+                fill="#FAF6EE" stroke="#A78B5E" strokeWidth="1.3" />
+          <rect x="107" y="151" width="46" height="38" rx="0.6"
+                fill="none" stroke="#7C633F" strokeWidth="0.5" />
+          <text x="130" y="171" textAnchor="middle"
+                fontFamily="Playfair Display, Georgia, serif"
+                fontSize="11.5" fontWeight="500" fill="#0B0F19">
+            Top <tspan fontStyle="italic" fill="#1B4D6E">Note</tspan>
+          </text>
+          <text x="130" y="183" textAnchor="middle"
+                fontFamily="Geist, sans-serif"
+                fontSize="3.6" fontWeight="600" letterSpacing="1.6" fill="#7C633F">
+            FRAGRANCE  GUIDE
+          </text>
+
+          {/* brillos laterales del vidrio */}
+          <rect x="98.5" y="100" width="2.5" height="100" rx="1.25"
+                fill="rgba(255,255,255,0.55)" />
+          <rect x="159.5" y="100" width="1.5" height="100" rx="0.75"
+                fill="rgba(255,255,255,0.28)" />
+        </g>
+      </svg>
+      <div className="tn-spray-text">{PHRASES[phraseIdx]}</div>
+    </div>
   );
 }
 
@@ -2479,9 +4586,9 @@ function ArchiveView({ favorites, history, toggleFavorite, onCardOpen, onRunHist
           <span className="dot" />
           Tu colección
         </span>
-        <h1 className="tn-title">
+        <WordStaggerTitle className="tn-title" delay={0.1}>
           Tu <em>archivo.</em>
-        </h1>
+        </WordStaggerTitle>
       </Stagger>
 
       <Reveal y={36} duration={0.9}>
@@ -2641,9 +4748,9 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
       <Stagger as="section" gap={0.10} duration={1.0} y={48}
                className="tn-hero" style={{ padding: '64px 0 0' }}>
         <span className="tn-pill"><span className="dot" /> Catálogo</span>
-        <h1 className="tn-title tn-title-compact">
+        <WordStaggerTitle className="tn-title tn-title-compact" delay={0.1}>
           Explora el <em>archivo.</em>
-        </h1>
+        </WordStaggerTitle>
         <p className="tn-sub">
           {fmtInt(CATALOG.length)} fragancias indexadas. Filtra por familia, género o estación;
           busca por nombre o casa.
@@ -2844,9 +4951,24 @@ function DetailModal({ perfume, score, reasoning, isFavorite, onToggleFavorite, 
   const tint = getTint(perfume.familia);
   const initial = perfume.nombre.replace(/[^A-Za-z0-9]/g, '').charAt(0).toUpperCase() || 'T';
 
+  const BgEl = motion ? motion.div : 'div';
+  const PanelEl = motion ? motion.div : 'div';
+  const bgMotion = motion ? {
+    initial: { opacity: 0 },
+    animate: { opacity: 1 },
+    exit: { opacity: 0 },
+    transition: { duration: 0.25, ease: EASE_CINE },
+  } : {};
+  const panelMotion = motion ? {
+    initial: { opacity: 0, y: 30, scale: 0.96 },
+    animate: { opacity: 1, y: 0, scale: 1 },
+    exit: { opacity: 0, y: 20, scale: 0.97 },
+    transition: { duration: 0.42, ease: EASE_CINE },
+  } : {};
+
   return (
-    <div className="tn-modal-bg" onClick={onClose}>
-      <div className="tn-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+    <BgEl className="tn-modal-bg" onClick={onClose} {...bgMotion}>
+      <PanelEl className="tn-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" {...panelMotion}>
         <button className="tn-modal-close" onClick={onClose} aria-label="Cerrar">
           <X size={18} />
         </button>
@@ -2954,8 +5076,8 @@ function DetailModal({ perfume, score, reasoning, isFavorite, onToggleFavorite, 
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      </PanelEl>
+    </BgEl>
   );
 }
 
@@ -3030,6 +5152,14 @@ const SvgSearch = ({ size = 16 }) => (
        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="11" cy="11" r="8" />
     <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  </svg>
+);
+
+const SvgUser = ({ size = 18 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
   </svg>
 );
 
