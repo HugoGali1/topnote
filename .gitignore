@@ -1,6 +1,17 @@
 # Dataset crudo de Kaggle — no se redistribuye, se descarga aparte.
 # Ver README.md sección "Setup inicial".
 data/parfumo_data.csv
+# Dataset Fragrantica de Kaggle (CC BY-NC-SA): olgagmiufana1/fragrantica-com-fragrance-dataset
+# Lo usan scripts/*_dataset.py; se descarga aparte, no se redistribuye.
+data/fragrantica_dataset.csv
+
+# Archivos locales de Claude Code.
+.claude/
+
+# Artefactos de diagnóstico del navegador.
+_app.png
+_diag*.*
+_drive.mjs
 
 # Bundle generado para mover el scraper a otra máquina (ad-hoc).
 scraper-bundle.zip

@@ -476,6 +476,14 @@ const LLM_CANDIDATE_CAP = 80;
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
 const fmtInt = (n) => (n == null ? '—' : Number(n).toLocaleString('es-ES'));
 
+/* Normaliza números escritos en palabra a dígitos para que "one million"
+   encuentre "1 Million", "nine pm" → "9 pm", etc. */
+const _NUMWORDS = { one: '1', two: '2', three: '3', four: '4', five: '5', six: '6',
+  seven: '7', eight: '8', nine: '9', ten: '10', eleven: '11', twelve: '12' };
+const numNorm = (s) => (s || '').toLowerCase().replace(
+  /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/g,
+  (m) => _NUMWORDS[m]);
+
 /* Construye una descripción corta a partir de las notas, ya que el dataset
    Parfumo no trae copy editorial. */
 function autoDesc(p) {
@@ -1067,7 +1075,7 @@ function TopNote() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(CATALOG_PATH, { cache: 'force-cache' });
+        const res = await fetch(CATALOG_PATH, { cache: 'no-cache' });
         if (!res.ok) throw new Error(`HTTP ${res.status} al cargar el catálogo.`);
         const data = await res.json();
         const arr = Array.isArray(data) ? data : data.perfumes;
@@ -4798,14 +4806,14 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
   const filtered = useMemo(() => {
     let pool = CATALOG;
     if (cat.familia)        pool = pool.filter((p) => p.familia === cat.familia);
-    if (cat.gender)         pool = pool.filter((p) => p.genero === cat.gender || p.genero === 'unisex');
+    if (cat.gender)         pool = pool.filter((p) => p.genero === cat.gender);
     if (cat.season)         pool = pool.filter((p) => (p.temporada || []).includes(cat.season));
     if (cat.minRating > 0)  pool = pool.filter((p) => (p.rating || 0) >= cat.minRating);
     if (cat.search.trim()) {
-      const q = cat.search.toLowerCase().trim();
+      const q = numNorm(cat.search.trim());
       pool = pool.filter((p) =>
-        (p.nombre || '').toLowerCase().includes(q) ||
-        (p.casa   || '').toLowerCase().includes(q)
+        numNorm(p.nombre).includes(q) ||
+        numNorm(p.casa).includes(q)
       );
     }
     const sorted = pool.slice();
