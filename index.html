@@ -2406,15 +2406,26 @@ function ThemeStyles() {
       }
       .tn-frame svg.tn-bottle {
         position: relative; z-index: 1;
-        width: 50%; height: auto;
+        width: 65%; height: auto;
         filter: drop-shadow(0 10px 22px rgba(10,15,31,0.10));
       }
       .tn-frame .tn-img {
         position: relative; z-index: 1;
-        width: 82%; height: auto; max-height: 84%;
+        width: 94%; height: auto; max-height: 94%;
         object-fit: contain;
         mix-blend-mode: multiply;
         filter: drop-shadow(0 12px 28px rgba(10,15,31,0.14));
+      }
+      .tn-frame .tn-img--social {
+        position: absolute !important;
+        top: 0 !important; left: 0 !important;
+        width: 100% !important;
+        height: 122% !important;
+        max-height: none !important;
+        object-fit: cover !important;
+        object-position: center top !important;
+        -webkit-mask-image: none !important;
+        mask-image: none !important;
       }
 
       .tn-badge {
@@ -2655,13 +2666,24 @@ function ThemeStyles() {
         background: radial-gradient(ellipse at 50% 110%, rgba(79,181,232,0.18), transparent 65%);
         pointer-events: none;
       }
-      .tn-modal-frame svg.tn-bottle-lg { width: 200px; height: auto; position: relative; z-index: 1; }
+      .tn-modal-frame svg.tn-bottle-lg { width: 260px; height: auto; position: relative; z-index: 1; }
       .tn-modal-frame .tn-img-lg {
         position: relative; z-index: 1;
-        width: 75%; height: auto; max-height: 85%;
+        width: 90%; height: auto; max-height: 92%;
         object-fit: contain;
         mix-blend-mode: multiply;
         filter: drop-shadow(0 18px 40px rgba(10,15,31,0.18));
+      }
+      .tn-modal-frame .tn-img-lg.tn-img--social {
+        position: absolute !important;
+        top: 0 !important; left: 0 !important;
+        width: 100% !important;
+        height: 122% !important;
+        max-height: none !important;
+        object-fit: cover !important;
+        object-position: center top !important;
+        -webkit-mask-image: none !important;
+        mask-image: none !important;
       }
       .tn-modal-info {
         padding: 40px 44px 44px;
@@ -2903,6 +2925,21 @@ function ThemeStyles() {
         color: var(--ink);
         font-variant-numeric: tabular-nums;
       }
+
+      /* ─── Infinite scroll loader ──────────────────────────────── */
+      .tn-load-more {
+        display: flex; justify-content: center; align-items: center;
+        padding: 32px 0 16px;
+      }
+      .tn-spinner {
+        display: inline-block;
+        width: 28px; height: 28px;
+        border: 2.5px solid var(--hairline);
+        border-top-color: var(--ink-mute);
+        border-radius: 50%;
+        animation: tn-spin 0.75s linear infinite;
+      }
+      @keyframes tn-spin { to { transform: rotate(360deg); } }
 
       /* ─── Paginación ───────────────────────────────────────────── */
       .tn-pagination {
@@ -4404,14 +4441,15 @@ function PerfumeCard({ perfume, rank, score, isFavorite, onToggleFavorite, onOpe
 function PerfumeImage({ perfume, tint, initial, large = false }) {
   const [failed, setFailed] = useState(false);
   const src = perfume && perfume.imagen;
+  const isSocial = src && src.includes('perfume_social');
   if (src && !failed) {
+    const cls = [large ? 'tn-img tn-img-lg' : 'tn-img', isSocial ? 'tn-img--social' : ''].join(' ').trim();
     return (
       <img
-        className={large ? 'tn-img tn-img-lg' : 'tn-img'}
+        className={cls}
         src={src}
         alt={perfume.nombre}
         loading="lazy"
-        // Parfumo a veces filtra por Referer; con no-referrer pasa siempre.
         referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
       />
@@ -4753,12 +4791,9 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
     minRating: 0,
     search: '',
     sort: 'popularity',
-    page: 0,
   });
 
-  // Cambios de filtro/sort resetean page a 0; cambios explícitos de page no.
-  const updateCat = (patch) =>
-    setCat((prev) => ({ ...prev, ...patch, page: ('page' in patch) ? patch.page : 0 }));
+  const updateCat = (patch) => setCat((prev) => ({ ...prev, ...patch }));
 
   const filtered = useMemo(() => {
     let pool = CATALOG;
@@ -4789,14 +4824,30 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
     return sorted;
   }, [cat.familia, cat.gender, cat.season, cat.minRating, cat.search, cat.sort]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / CATALOG_PAGE_SIZE));
-  const page = Math.min(cat.page, totalPages - 1);
-  const pageItems = filtered.slice(page * CATALOG_PAGE_SIZE, (page + 1) * CATALOG_PAGE_SIZE);
+  const [visibleCount, setVisibleCount] = useState(CATALOG_PAGE_SIZE);
+  const sentinelRef = useRef(null);
 
-  const goToPage = (p) => {
-    setCat((prev) => ({ ...prev, page: p }));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  useEffect(() => {
+    setVisibleCount(CATALOG_PAGE_SIZE);
+  }, [cat.familia, cat.gender, cat.season, cat.minRating, cat.search, cat.sort]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisibleCount((prev) => Math.min(prev + CATALOG_PAGE_SIZE, filtered.length));
+        }
+      },
+      { rootMargin: '400px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [filtered.length, visibleCount]);
+
+  const visibleItems = filtered.slice(0, visibleCount);
+  const hasMore = visibleCount < filtered.length;
 
   const clearFilters = () =>
     updateCat({ familia: null, gender: null, season: null, minRating: 0, search: '' });
@@ -4908,7 +4959,7 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
           <span><b>{fmtInt(filtered.length)}</b> resultados</span>
           {filtered.length > 0 && (
             <span style={{ color: 'var(--ink-mute)' }}>
-              · Página <b style={{ color: 'var(--ink)' }}>{page + 1}</b> de {totalPages}
+              · Mostrando <b style={{ color: 'var(--ink)' }}>{Math.min(visibleCount, filtered.length)}</b> de {fmtInt(filtered.length)}
             </span>
           )}
         </div>
@@ -4925,7 +4976,7 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
       ) : (
         <>
           <section className="tn-grid">
-            {pageItems.map((p, i) => (
+            {visibleItems.map((p, i) => (
               <PerfumeCard
                 key={p.id}
                 perfume={p}
@@ -4939,8 +4990,11 @@ function CatalogView({ favorites, toggleFavorite, onCardOpen, onGoSearch }) {
             ))}
           </section>
 
-          {totalPages > 1 && (
-            <Pagination page={page} total={totalPages} onChange={goToPage} />
+          <div ref={sentinelRef} style={{ height: 1 }} />
+          {hasMore && (
+            <div className="tn-load-more">
+              <span className="tn-spinner" />
+            </div>
           )}
         </>
       )}
