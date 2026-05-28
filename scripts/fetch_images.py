@@ -48,9 +48,11 @@ import argparse
 import json
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # stdout UTF-8 para que la consola de Windows no pete con caracteres unicode.
@@ -169,6 +171,12 @@ def main() -> int:
         default=100,
         help='Guarda progreso cada N perfumes procesados.',
     )
+    ap.add_argument(
+        '--workers',
+        type=int,
+        default=1,
+        help='Número de workers en paralelo (default 1).',
+    )
     args = ap.parse_args()
 
     catalog_path = Path(args.catalog)
@@ -198,58 +206,69 @@ def main() -> int:
         print('  Nada por procesar. Todos los perfumes con URL ya tienen imagen.')
         return 0
 
-    eta_min = len(todo_indices) * args.delay / 60.0
+    workers = max(1, args.workers)
+    eta_min = len(todo_indices) * args.delay / 60.0 / workers
     print(f'· Total en catálogo : {total}', flush=True)
     print(f'· Ya con imagen     : {already_done}', flush=True)
     print(f'· A procesar        : {len(todo_indices)}', flush=True)
-    print(f'· Delay/petición    : {args.delay}s', flush=True)
-    print(f'· ETA               : ~{eta_min:.1f} min ({eta_min/60:.1f} h)', flush=True)
+    print(f'· Workers           : {workers}', flush=True)
+    print(f'· Delay/worker      : {args.delay}s', flush=True)
+    print(f'· ETA               : ~{eta_min:.0f} min ({eta_min/60:.1f} h)', flush=True)
     print('', flush=True)
 
-    success = 0
-    fail = 0
-    last_save = 0
+    lock = threading.Lock()
+    counters = {'success': 0, 'fail': 0, 'done': 0, 'last_save': 0}
 
-    try:
-        for idx, perfume_i in enumerate(todo_indices):
-            perfume = perfumes[perfume_i]
-            url = perfume['url']
-            img = None
-            for attempt in range(args.retry + 1):
-                img = fetch_image_url(url)
-                if img:
-                    break
-                if attempt < args.retry:
-                    time.sleep(args.delay * 2)  # backoff extra al reintentar
+    def process(perfume_i: int) -> None:
+        perfume = perfumes[perfume_i]
+        url = perfume['url']
+        img = None
+        for attempt in range(args.retry + 1):
+            img = fetch_image_url(url)
+            if img:
+                break
+            if attempt < args.retry:
+                time.sleep(args.delay * 2)
 
+        with lock:
             if img:
                 perfume['imagen'] = img
-                success += 1
+                counters['success'] += 1
             else:
-                fail += 1
-                # Marcamos como visitado fallido para no re-pegar al servidor
-                # en futuras ejecuciones del script.
+                counters['fail'] += 1
                 perfume['imagen_intentos'] = (perfume.get('imagen_intentos', 0) or 0) + 1
 
-            if (idx + 1) % 20 == 0 or (idx + 1) == len(todo_indices):
-                pct = 100 * (idx + 1) // len(todo_indices)
+            counters['done'] += 1
+            done = counters['done']
+            total_todo = len(todo_indices)
+
+            if done % 20 == 0 or done == total_todo:
+                pct = 100 * done // total_todo
                 print(
-                    f'  {pct:3d}% ({idx + 1}/{len(todo_indices)}) '
-                    f'· ok: {success} · fail: {fail}',
+                    f'  {pct:3d}% ({done}/{total_todo}) '
+                    f'· ok: {counters["success"]} · fail: {counters["fail"]}',
                     flush=True,
                 )
 
-            if (idx + 1) - last_save >= args.checkpoint:
+            if done - counters['last_save'] >= args.checkpoint:
                 save_atomic(data, out_path)
-                last_save = idx + 1
+                counters['last_save'] = done
 
-            if idx + 1 < len(todo_indices):
-                time.sleep(args.delay)
+        time.sleep(args.delay)
+
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(process, i) for i in todo_indices]
+            for f in as_completed(futures):
+                f.result()
     except KeyboardInterrupt:
         print('\n  ! Interrumpido por usuario. Guardando progreso…', flush=True)
 
     save_atomic(data, out_path)
-    print(f'\n[OK] Hecho. ok: {success} · fail: {fail} · escrito en {out_path}', flush=True)
+    print(
+        f'\n[OK] Hecho. ok: {counters["success"]} · fail: {counters["fail"]} · escrito en {out_path}',
+        flush=True,
+    )
     return 0
 
 

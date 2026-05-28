@@ -1525,6 +1525,7 @@ function ThemeStyles() {
       html, body {
         margin: 0; padding: 0;
         background: var(--bg);
+        overflow-x: hidden;
         color: var(--ink);
         font-family: var(--font-sans);
         font-size: var(--t-15);
@@ -1974,18 +1975,61 @@ function ThemeStyles() {
       }
 
       /* ─── Hero ─────────────────────────────────────────────────── */
-      .tn-hero { padding: 104px 0 72px; display: grid; gap: 0; position: relative; }
+      /* ── Fondo atmosférico global ─────────────────────────────── */
+      body {
+        background: #FAF8F3;
+      }
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background:
+          radial-gradient(ellipse 80% 60% at 8% 20%,  rgba(167,139,94,0.13) 0%, transparent 60%),
+          radial-gradient(ellipse 60% 50% at 95% 80%, rgba(79,181,232,0.11) 0%, transparent 58%),
+          radial-gradient(ellipse 50% 40% at 60% 0%,  rgba(79,181,232,0.07) 0%, transparent 52%),
+          radial-gradient(ellipse 40% 30% at 30% 95%, rgba(167,139,94,0.07) 0%, transparent 50%);
+        pointer-events: none;
+        z-index: 0;
+      }
+      .tn-main { position: relative; z-index: 1; }
+
+
+      /* ── Stats bar ────────────────────────────────────────────── */
+      .tn-stats {
+        display: flex; gap: 28px; flex-wrap: wrap;
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid var(--hairline);
+      }
+      .tn-stats-item { display: flex; flex-direction: column; gap: 2px; }
+      .tn-stats-num {
+        font-size: 22px; font-weight: 600; letter-spacing: -0.03em; color: var(--ink);
+      }
+      .tn-stats-label {
+        font-size: 12px; color: var(--ink-mute); font-weight: 500;
+        text-transform: uppercase; letter-spacing: 0.06em;
+      }
+
+
+      .tn-hero { padding: 72px 0 48px; display: grid; gap: 0; position: relative; }
 
       /* Home hero: dos columnas con animación a la derecha. La vista Archive
          sigue usando .tn-hero sin modificador (una columna). */
       .tn-hero.tn-hero--home {
-        grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-        gap: 64px;
-        align-items: center;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+        gap: 0;
+        align-items: stretch;
+        min-height: calc(100vh - 72px);
+        padding: 0;
       }
-      .tn-hero--home .tn-hero-left  { display: flex; flex-direction: column; min-width: 0; }
-      .tn-hero--home .tn-hero-right { display: flex; align-items: center; justify-content: center;
-                                      position: relative; min-width: 0; }
+      .tn-hero--home .tn-hero-left  {
+        display: flex; flex-direction: column; justify-content: center;
+        min-width: 0; padding: 64px 40px 64px 0;
+      }
+      .tn-hero--home .tn-hero-right {
+        display: flex; align-items: center; justify-content: center;
+        position: relative; min-width: 0;
+      }
 
       .tn-pill {
         display: inline-flex; align-items: center; gap: 9px;
@@ -2010,11 +2054,11 @@ function ThemeStyles() {
       }
       .tn-title {
         font-family: var(--font-sans);
-        font-size: clamp(56px, 7.4vw, 108px);
+        font-size: clamp(52px, 6.8vw, 96px);
         line-height: 0.92;
         letter-spacing: -0.045em;
         font-weight: 500;
-        margin-top: 32px;
+        margin-top: 20px;
         max-width: 13ch;
         text-wrap: balance;
         color: var(--ink);
@@ -2050,17 +2094,19 @@ function ThemeStyles() {
         color: var(--ink-mute);
         font-size: var(--t-17);
         line-height: 1.6;
-        margin-top: 24px;
-        max-width: 56ch;
+        margin-top: 14px;
+        max-width: 100%;
         letter-spacing: -0.003em;
       }
       .tn-sub b { color: var(--ink-soft); font-weight: 500; }
 
       /* ─── Hero bottle 3D (Three.js canvas) ─────────────────────── */
       .tn-bottle-stage {
-        width: 100%;
-        max-width: 460px;
-        aspect-ratio: 5 / 7;
+        width: 88%;
+        max-width: 560px;
+        height: 80%;
+        min-height: 480px;
+        max-height: 760px;
         position: relative;
         margin: 0 auto;
       }
@@ -2099,7 +2145,7 @@ function ThemeStyles() {
       /* Composer */
       .tn-composer {
         position: relative;
-        margin-top: 48px; max-width: 820px;
+        margin-top: 28px; max-width: 100%;
         display: grid; grid-template-columns: 1fr auto;
         gap: 14px; align-items: center;
         border-bottom: 1px solid var(--ink);
@@ -2365,9 +2411,10 @@ function ThemeStyles() {
       }
       .tn-frame .tn-img {
         position: relative; z-index: 1;
-        width: 78%; max-width: 280px; height: auto; max-height: 86%;
+        width: 82%; height: auto; max-height: 84%;
         object-fit: contain;
-        filter: drop-shadow(0 14px 28px rgba(10,15,31,0.18));
+        mix-blend-mode: multiply;
+        filter: drop-shadow(0 12px 28px rgba(10,15,31,0.14));
       }
 
       .tn-badge {
@@ -2610,9 +2657,11 @@ function ThemeStyles() {
       }
       .tn-modal-frame svg.tn-bottle-lg { width: 200px; height: auto; position: relative; z-index: 1; }
       .tn-modal-frame .tn-img-lg {
-        width: 78%; max-width: 320px; height: auto; max-height: 420px;
-        object-fit: contain; position: relative; z-index: 1;
-        filter: drop-shadow(0 18px 36px rgba(10,15,31,0.22));
+        position: relative; z-index: 1;
+        width: 75%; height: auto; max-height: 85%;
+        object-fit: contain;
+        mix-blend-mode: multiply;
+        filter: drop-shadow(0 18px 40px rgba(10,15,31,0.18));
       }
       .tn-modal-info {
         padding: 40px 44px 44px;
@@ -2902,11 +2951,14 @@ function ThemeStyles() {
            de las acciones para que el composer permanezca above-the-fold. */
         .tn-hero.tn-hero--home {
           grid-template-columns: 1fr;
-          gap: 36px;
+          min-height: unset;
+          gap: 0;
         }
-        .tn-hero--home .tn-hero-right { order: 2; }
-        .tn-hero--home .tn-hero-left  { order: 1; }
-        .tn-bottle-stage { max-width: 300px; margin: 0 auto; }
+        .tn-hero--home .tn-hero-right {
+          order: 2; min-height: 340px;
+        }
+        .tn-hero--home .tn-hero-left  { order: 1; padding: 48px 0 32px; }
+        .tn-bottle-stage { width: 70%; max-width: 300px; height: 300px; min-height: unset; margin: 0 auto; }
         .tn-cat-bar {
           grid-template-columns: 1fr;
           gap: 12px;
@@ -3566,7 +3618,7 @@ function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filter
   const activeFilterCount = Object.values(filters).filter((v) => v !== null).length;
 
   return (
-    <main className="tn-main">
+    <main className="tn-main" style={{ padding: '0 24px' }}>
       <section className="tn-hero tn-hero--home">
         <Stagger className="tn-hero-left" gap={0.11} duration={1.05} y={56}>
           <WordStaggerTitle className="tn-title" delay={0.15}>
@@ -3622,6 +3674,21 @@ function SearchView({ query, setQuery, onSubmit, loading, error, onRetry, filter
               <button onClick={onRetry || onSubmit}>Reintentar →</button>
             </div>
           )}
+
+          <div className="tn-stats">
+            <div className="tn-stats-item">
+              <span className="tn-stats-num">{fmtInt(CATALOG.length)}</span>
+              <span className="tn-stats-label">Fragancias</span>
+            </div>
+            <div className="tn-stats-item">
+              <span className="tn-stats-num">7</span>
+              <span className="tn-stats-label">Familias olfativas</span>
+            </div>
+            <div className="tn-stats-item">
+              <span className="tn-stats-num">IA</span>
+              <span className="tn-stats-label">Motor Gemini</span>
+            </div>
+          </div>
         </Stagger>
 
         <HeroBottleColumn />
