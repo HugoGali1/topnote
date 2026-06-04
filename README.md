@@ -1,7 +1,42 @@
-# Top Note
+# Top Note 🌸
 
-Aplicación de recomendación olfativa que combina un catálogo masivo de
-fragancias (vía Parfumo) con un perfumista LLM (Claude).
+**Top Note** es un recomendador de fragancias que combina un catálogo masivo
+de perfumes —más de **30.000 entradas** fusionadas desde **Parfumo** y
+**Fragrantica** (incluyendo +14.000 perfumes árabes)— con un **perfumista IA**
+basado en Google Gemini.
+
+Le describes lo que buscas con tus propias palabras («algo amaderado y cálido
+para el invierno, parecido a Baccarat Rouge») y la app prefiltra el catálogo,
+se lo pasa al modelo y te devuelve 3–5 recomendaciones razonadas, con sus
+notas, acordes y por qué encajan.
+
+## ✨ Características
+
+- 🔎 **Búsqueda en lenguaje natural** — describe el aroma o la ocasión y deja
+  que el LLM interprete la intención.
+- 🧴 **Catálogo de +30k fragancias** — Parfumo + Fragrantica fusionados, con
+  notas traducidas al español, familia, género, temporada y rating normalizado.
+- 🧠 **Perfumista IA (Gemini 2.5 Flash)** — re-rankea los candidatos y explica
+  cada recomendación.
+- 🎚️ **Filtros duros** — familia olfativa, género, temporada y año.
+- 🖼️ **Imágenes oficiales** — scraping respetuoso desde los CDN de las fuentes,
+  con fallback a un frasco 3D estilizado (Three.js).
+- ♾️ **Scroll infinito** y UI animada (React + Framer Motion), sin build.
+- 🔐 **Backend NestJS** opcional con autenticación JWT para guardar favoritos.
+
+## 🛠️ Stack
+
+| Capa | Tecnología |
+|------|------------|
+| Frontend | React (vía CDN, sin build), Framer Motion, Three.js |
+| IA | Google Gemini 2.5 Flash |
+| Backend | NestJS + JWT (opcional) |
+| Datos | Python (stdlib), datasets de Kaggle (Parfumo + Fragrantica) |
+
+> **Nota sobre las API keys:** la clave de Gemini se introduce en el navegador
+> y se guarda solo en `localStorage` — nunca se sube al repositorio. El backend
+> usa un `server/.env` local (mira `server/.env.example`) que está ignorado por
+> git.
 
 ## Estructura
 
