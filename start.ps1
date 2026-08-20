@@ -1,7 +1,7 @@
 # Top Note — arranca backend + frontend y abre el navegador
 $root = $PSScriptRoot
 
-# Backend NestJS (puerto 3000)
+# Backend NestJS (puerto 3001 — se lee de PORT en server/.env)
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\server'; npm run start:dev" -WindowStyle Normal
 
 # Frontend — Python http.server (puerto 8000)
