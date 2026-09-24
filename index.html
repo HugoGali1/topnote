@@ -452,7 +452,6 @@ const FAMILIA_OPTIONS = ['amaderada', 'oriental', 'floral', 'cítrica', 'gourman
 const STORAGE_KEYS = {
   FAVORITES: 'topnote.favorites.v1',
   HISTORY: 'topnote.history.v1',
-  JWT: 'topnote.jwt.v1',
   CURRENT_USER: 'topnote.current_user.v1',
 };
 
@@ -526,11 +525,32 @@ function avatarGradient(seed) {
   return `linear-gradient(135deg, hsl(${h1} 38% 28%) 0%, hsl(${h2} 45% 18%) 100%)`;
 }
 
-function getToken() { return localStorage.getItem(STORAGE_KEYS.JWT); }
-function setToken(t) {
-  if (t) localStorage.setItem(STORAGE_KEYS.JWT, t);
-  else localStorage.removeItem(STORAGE_KEYS.JWT);
+/* --- Sesión: cookies httpOnly + CSRF double-submit -------------------------
+   El access token ya NO vive en localStorage: viaja en una cookie httpOnly que
+   este código no puede leer — y que, por tanto, un XSS tampoco puede robar.
+   Lo único legible es `tn_csrf`, que hay que devolver en cada petición que
+   muta estado (cabecera X-CSRF-Token). Esa es toda la gracia del double-submit:
+   una web atacante puede provocar la petición, pero no leer nuestra cookie,
+   así que no sabe qué poner en la cabecera.
+
+   Restos de la versión anterior (JWT en localStorage): fuera, para que nadie
+   se quede con un token viejo tirado en el navegador.                        */
+try { localStorage.removeItem('topnote.jwt.v1'); } catch (e) { /* */ }
+
+function readCookie(name) {
+  const m = document.cookie.match(
+    new RegExp('(?:^|;\\s*)' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
 }
+
+/* Copia en memoria del token CSRF. Solo hace falta cuando la cookie no es
+   legible desde el front — despliegues con la API en otro dominio. */
+let csrfMemo = null;
+function csrfToken() { return readCookie('tn_csrf') || csrfMemo; }
+function rememberCsrf(t) { if (t) csrfMemo = t; }
+function forgetSession() { csrfMemo = null; }
+/* ¿Hay algo que parezca una sesión? Evita pedir /auth/me al visitante anónimo. */
+function hasSession() { return !!csrfToken(); }
 
 class ApiError extends Error {
   constructor(message, status, code) {
@@ -540,30 +560,81 @@ class ApiError extends Error {
   }
 }
 
-async function api(path, { method = 'GET', body, auth = true } = {}) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (auth) {
-    const token = getToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
+/* Endpoints que no deben disparar un intento de refresco: un 401 en ellos
+   significa "credenciales malas", no "token caducado". */
+const NO_REFRESH = new Set(['/auth/login', '/auth/signup', '/auth/refresh']);
+
+/* Un solo refresco en vuelo: si tres peticiones caducan a la vez, comparten la
+   misma llamada en lugar de rotar el refresh token tres veces — lo que
+   dispararía la detección de reutilización del servidor y cerraría la sesión. */
+let refreshInFlight = null;
+async function refreshSession() {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const headers = {};
+        const c = csrfToken();
+        if (c) headers['X-CSRF-Token'] = c;
+        const res = await fetch(`${API_BASE}/auth/refresh`, {
+          method: 'POST', headers, credentials: 'include',
+        });
+        if (!res.ok) { forgetSession(); return false; }
+        const data = await res.json().catch(() => null);
+        rememberCsrf(data && data.csrfToken);
+        return true;
+      } catch (e) {
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
   }
+  return refreshInFlight;
+}
+
+/** Pide el token CSRF al servidor. Solo necesario si la cookie no es legible. */
+async function ensureCsrf() {
+  if (csrfToken()) return;
+  try {
+    const res = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'include' });
+    if (res.ok) rememberCsrf((await res.json()).csrfToken);
+  } catch (e) { /* sin red; ya fallará la petición de verdad */ }
+}
+
+async function api(path, { method = 'GET', body, _retry = true } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  const c = csrfToken();
+  if (c) headers['X-CSRF-Token'] = c;
+
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
+      // Sin esto el navegador ni manda ni guarda las cookies de sesión.
+      credentials: 'include',
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
     throw new ApiError(
-      'No se ha podido contactar con el servidor. ¿Está arrancado en :3000?',
+      'No se ha podido contactar con el servidor. ¿Está arrancado en :3001?',
       0, 'network',
     );
   }
+
+  // El access token dura 15 min. Cuando caduca, lo renovamos con el refresh y
+  // reintentamos una sola vez — el usuario no se entera de nada.
+  if (res.status === 401 && _retry && !NO_REFRESH.has(path)) {
+    if (await refreshSession()) {
+      return api(path, { method, body, _retry: false });
+    }
+  }
+
   if (res.status === 204) return null;
   let data = null;
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
-    try { data = await res.json(); } catch { /* */ }
+    try { data = await res.json(); } catch (e) { /* */ }
   }
   if (!res.ok) {
     const msg = (data && (data.message || data.error))
@@ -577,30 +648,32 @@ async function api(path, { method = 'GET', body, auth = true } = {}) {
   return data;
 }
 
+/* === Cuenta === */
 async function signupAccount({ name, email, password, gender }) {
+  await ensureCsrf();
   const data = await api('/auth/signup', {
     method: 'POST',
     body: { name, email, password, gender: gender ?? null },
-    auth: false,
   });
-  setToken(data.token);
+  rememberCsrf(data.csrfToken);
   return data.user;
 }
 async function loginAccount({ email, password }) {
+  await ensureCsrf();
   const data = await api('/auth/login', {
     method: 'POST',
     body: { email, password },
-    auth: false,
   });
-  setToken(data.token);
+  rememberCsrf(data.csrfToken);
   return data.user;
 }
 async function fetchCurrentUser() {
-  if (!getToken()) return null;
+  // Sin rastro de sesión no molestamos al servidor.
+  if (!hasSession()) return null;
   try {
     return await api('/auth/me');
   } catch (err) {
-    if (err.status === 401) setToken(null);
+    if (err.status === 401 || err.status === 403) forgetSession();
     return null;
   }
 }
@@ -611,7 +684,34 @@ async function apiDeleteAccount(password) {
   return api('/auth/account', { method: 'DELETE', body: { password } });
 }
 async function logoutAccount() {
-  setToken(null);
+  try { await api('/auth/logout', { method: 'POST' }); } catch (e) { /* da igual */ }
+  forgetSession();
+}
+/** Cierra la sesión en todos los dispositivos y revoca los tokens vivos. */
+async function logoutEverywhere() {
+  try { await api('/auth/logout-all', { method: 'POST' }); } catch (e) { /* */ }
+  forgetSession();
+}
+async function apiListSessions() { return api('/auth/sessions'); }
+
+/* === Contraseña olvidada === */
+async function apiForgotPassword(email) {
+  await ensureCsrf();
+  return api('/auth/forgot-password', { method: 'POST', body: { email } });
+}
+async function apiResetPassword(token, password) {
+  await ensureCsrf();
+  return api('/auth/reset-password', { method: 'POST', body: { token, password } });
+}
+
+/* === Verificación de email === */
+async function apiVerifyEmail(token) {
+  await ensureCsrf();
+  return api('/auth/verify-email', { method: 'POST', body: { token } });
+}
+async function apiResendVerification(email) {
+  await ensureCsrf();
+  return api('/auth/resend-verification', { method: 'POST', body: { email } });
 }
 
 /* === Favorites === */
@@ -1065,9 +1165,13 @@ function TopNote() {
   const [detail, setDetail] = useState(null); // { perfume, score, reasoning }
   const [showFilters, setShowFilters] = useState(false);
   const [user, setUser] = useState(null);          // sesión activa o null
-  const [authView, setAuthView] = useState(null);  // 'login' | 'signup' | null
+  const [authView, setAuthView] = useState(null);  // 'login' | 'signup' | 'forgot' | null
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileMode, setProfileMode] = useState(null); // 'edit' | 'delete' | null
+  // Token de reseteo que llega en la URL del correo (?reset_token=…)
+  const [resetToken, setResetToken] = useState(null);
+  // Aviso efímero arriba del todo: { kind: 'ok' | 'err', text }
+  const [notice, setNotice] = useState(null);
 
   // Carga del catálogo Parfumo
   const [catalogState, setCatalogState] = useState({ status: 'loading', error: null, count: 0 });
@@ -1123,6 +1227,44 @@ function TopNote() {
     })();
   }, []);
 
+  /* Enlaces que llegan desde el correo. Los parámetros se limpian de la URL
+     nada más leerlos: no queremos que un token quede en el historial del
+     navegador, en el título de una pestaña compartida ni en un Referer. */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const verifyTok = params.get('verify_token');
+    const resetTok  = params.get('reset_token');
+    if (!verifyTok && !resetTok) return;
+
+    params.delete('verify_token');
+    params.delete('reset_token');
+    const rest = params.toString();
+    window.history.replaceState({}, '',
+      window.location.pathname + (rest ? '?' + rest : ''));
+
+    if (resetTok) setResetToken(resetTok);
+    if (verifyTok) {
+      (async () => {
+        try {
+          const updated = await apiVerifyEmail(verifyTok);
+          setNotice({ kind: 'ok', text: 'Email confirmado. Ya está todo listo.' });
+          // Si es la sesión de este mismo navegador, refresca el usuario en
+          // pantalla para que desaparezca el aviso de "sin confirmar".
+          setUser((u) => (u && u.id === updated.id ? { ...u, emailVerified: true } : u));
+        } catch (err) {
+          setNotice({ kind: 'err', text: err.message || 'No se pudo confirmar el email.' });
+        }
+      })();
+    }
+  }, []);
+
+  // El aviso se va solo a los 6 segundos.
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   // Cierra modal de auth, dropdown del perfil y submodales con ESC
   useEffect(() => {
     if (!authView && !profileOpen && !profileMode) return;
@@ -1175,6 +1317,20 @@ function TopNote() {
     setProfileMode(null);
     // Limpia favoritos/historial en pantalla: ahora muestran solo lo "local
     // del invitado" — que es lo último persistido en localStorage.
+    const localFavs = await loadStorage(STORAGE_KEYS.FAVORITES, []);
+    const localHist = await loadStorage(STORAGE_KEYS.HISTORY, []);
+    setFavorites(localFavs);
+    setHistory(localHist);
+  };
+
+  /* Revoca todas las sesiones del usuario, incluida esta. Útil si sospechas
+     que alguien más tiene tu cuenta abierta en otro sitio. */
+  const onLogoutAll = async () => {
+    await logoutEverywhere();
+    setUser(null);
+    setProfileOpen(false);
+    setProfileMode(null);
+    setNotice({ kind: 'ok', text: 'Se han cerrado todas las sesiones abiertas.' });
     const localFavs = await loadStorage(STORAGE_KEYS.FAVORITES, []);
     const localHist = await loadStorage(STORAGE_KEYS.HISTORY, []);
     setFavorites(localFavs);
@@ -1362,11 +1518,25 @@ function TopNote() {
         profileOpen={profileOpen}
         onCloseProfile={() => setProfileOpen(false)}
         onLogout={onLogout}
+        onLogoutAll={onLogoutAll}
         onSwitchToLogin={() => { setProfileOpen(false); setAuthView('login'); }}
         onSwitchToSignup={() => { setProfileOpen(false); setAuthView('signup'); }}
         onEditProfile={() => { setProfileOpen(false); setProfileMode('edit'); }}
         onDeleteAccount={() => { setProfileOpen(false); setProfileMode('delete'); }}
       />
+
+      {notice && (
+        <div className={'tn-notice ' + (notice.kind === 'err' ? 'err' : 'ok')} role="status">
+          {notice.text}
+        </div>
+      )}
+
+      {user && !user.emailVerified && (
+        <VerifyEmailBar
+          email={user.email}
+          onNotice={setNotice}
+        />
+      )}
 
       <ViewSwitch viewKey={view}>
         {view === 'search' && (
@@ -1463,7 +1633,170 @@ function TopNote() {
           />
         )}
       </AnimatePresenceModal>
+
+      <AnimatePresenceModal>
+        {resetToken && (
+          <ResetPasswordModal
+            token={resetToken}
+            onDone={() => {
+              setResetToken(null);
+              // El reseteo revoca todas las sesiones: hay que volver a entrar.
+              setUser(null);
+              setNotice({ kind: 'ok', text: 'Contraseña cambiada. Inicia sesión con la nueva.' });
+              setAuthView('login');
+            }}
+            onClose={() => setResetToken(null)}
+          />
+        )}
+      </AnimatePresenceModal>
     </div>
+  );
+}
+
+/* ============================================================
+   VERIFY EMAIL BAR — recordatorio mientras la cuenta esté sin confirmar.
+   ============================================================ */
+function VerifyEmailBar({ email, onNotice }) {
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  const resend = async () => {
+    if (busy || sent) return;
+    setBusy(true);
+    try {
+      await apiResendVerification(email);
+      setSent(true);
+      onNotice({ kind: 'ok', text: `Enlace reenviado a ${email}.` });
+    } catch (err) {
+      onNotice({ kind: 'err', text: err.message || 'No se ha podido reenviar el enlace.' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="tn-verify-bar" role="status">
+      <span>
+        Tu email <strong>{email}</strong> está sin confirmar. Revisa tu bandeja
+        para asegurar la cuenta.
+      </span>
+      <button type="button" onClick={resend} disabled={busy || sent}>
+        {busy ? 'Enviando…' : sent ? 'Enlace enviado' : 'Reenviar enlace'}
+      </button>
+    </div>
+  );
+}
+
+/* ============================================================
+   RESET PASSWORD MODAL — se abre solo al entrar con ?reset_token=…
+   ============================================================ */
+function ResetPasswordModal({ token, onDone, onClose }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    if (password.length < 6) {
+      setError('La contraseña necesita al menos 6 caracteres.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('Las dos contraseñas no coinciden.');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      await apiResetPassword(token, password);
+      onDone();
+    } catch (err) {
+      setError(err.message || 'No se ha podido cambiar la contraseña.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const BgEl = motion ? motion.div : 'div';
+  const PanelEl = motion ? motion.div : 'div';
+  const bgMotion = motion ? {
+    initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 },
+    transition: { duration: 0.22, ease: EASE_CINE },
+  } : {};
+  const panelMotion = motion ? {
+    initial: { opacity: 0, y: 24, scale: 0.97 },
+    animate: { opacity: 1, y: 0, scale: 1 },
+    exit: { opacity: 0, y: 18, scale: 0.97 },
+    transition: { duration: 0.4, ease: EASE_CINE },
+  } : {};
+
+  return (
+    <BgEl className="tn-modal-bg tn-auth-bg" onClick={onClose} {...bgMotion}>
+      <PanelEl
+        className="tn-auth"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true"
+        {...panelMotion}
+      >
+        <button className="tn-modal-close" onClick={onClose} aria-label="Cerrar">
+          <X size={18} />
+        </button>
+
+        <div className="tn-auth-head">
+          <img src="assets/logo.png" alt="" aria-hidden="true" className="tn-auth-logo" />
+          <h2 className="tn-auth-title">Elige una <em>contraseña.</em></h2>
+          <p className="tn-auth-sub">
+            Al guardarla se cerrarán todas las sesiones abiertas de tu cuenta.
+          </p>
+        </div>
+
+        <form className="tn-auth-form" onSubmit={submit} noValidate>
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Contraseña nueva</span>
+            <div className="tn-auth-pass">
+              <input
+                type={showPass ? 'text' : 'password'} value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                placeholder="Mínimo 6 caracteres"
+                disabled={busy}
+                minLength={6}
+                autoFocus
+              />
+              <button
+                type="button"
+                className="tn-auth-pass-toggle"
+                onClick={() => setShowPass((v) => !v)}
+                aria-label={showPass ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showPass ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
+          </label>
+
+          <label className="tn-auth-field">
+            <span className="tn-auth-label">Repítela</span>
+            <input
+              type={showPass ? 'text' : 'password'} value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              placeholder="La misma otra vez"
+              disabled={busy}
+            />
+          </label>
+
+          {error && <div className="tn-auth-err">{error}</div>}
+
+          <button type="submit" className="tn-auth-submit" disabled={busy}>
+            {busy ? 'Guardando…' : 'Guardar contraseña'}
+            {!busy && <SvgArrowRightThick size={14} />}
+          </button>
+        </form>
+      </PanelEl>
+    </BgEl>
   );
 }
 
@@ -1864,6 +2197,66 @@ function ThemeStyles() {
         color: #8C2D14;
         font-size: 13px; padding: 10px 14px; border-radius: 10px;
         letter-spacing: -0.003em;
+      }
+
+      /* Confirmación tras pedir el enlace de recuperación. */
+      .tn-auth-ok {
+        background: #E9F3EC; border: 1px solid #BEDCC7;
+        color: #1F5B36;
+        font-size: 13px; line-height: 1.5; padding: 12px 14px; border-radius: 10px;
+        letter-spacing: -0.003em;
+      }
+
+      /* "¿Has olvidado tu contraseña?" */
+      .tn-auth-forgot { margin: -4px 0 0; text-align: right; }
+      .tn-auth-forgot button {
+        background: none; border: none; padding: 0; cursor: pointer;
+        font: inherit; font-size: 12.5px; color: var(--muted);
+        text-decoration: underline; text-underline-offset: 3px;
+        transition: color 0.2s var(--ease);
+      }
+      .tn-auth-forgot button:hover { color: var(--ink); }
+
+      /* Banda fija bajo la cabecera mientras el email siga sin confirmar. */
+      .tn-verify-bar {
+        /* En flujo normal, no sticky: la cabecera ya ocupa top:0 y dos
+           elementos pegados al mismo borde se solapan al hacer scroll. */
+        position: relative; z-index: 39;
+        display: flex; align-items: center; justify-content: center;
+        flex-wrap: wrap; gap: 8px 16px;
+        padding: 10px 20px;
+        background: #FDF3E3; border-bottom: 1px solid #EBD9B8;
+        color: #6B4B12; font-size: 13px; letter-spacing: -0.003em;
+      }
+      .tn-verify-bar strong { font-weight: 600; }
+      .tn-verify-bar button {
+        background: #6B4B12; color: #fff; border: none;
+        padding: 6px 14px; border-radius: 999px;
+        font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+        transition: opacity 0.2s var(--ease);
+      }
+      .tn-verify-bar button:hover:not(:disabled) { opacity: 0.85; }
+      .tn-verify-bar button:disabled { opacity: 0.5; cursor: default; }
+
+      /* Aviso flotante (email confirmado, sesiones cerradas…). */
+      .tn-notice {
+        /* Abajo, no arriba: arriba compite con la cabecera y con la banda de
+           verificación, y acababa tapándolas. */
+        position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
+        z-index: 120; max-width: min(92vw, 460px);
+        padding: 12px 20px; border-radius: 999px;
+        font-size: 13.5px; letter-spacing: -0.003em; text-align: center;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+        animation: tn-notice-in 0.32s var(--ease) both;
+      }
+      .tn-notice.ok  { background: #16233d; color: #fff; }
+      .tn-notice.err { background: #8C2D14; color: #fff; }
+      @keyframes tn-notice-in {
+        from { opacity: 0; transform: translate(-50%, 10px); }
+        to   { opacity: 1; transform: translate(-50%, 0); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .tn-notice { animation: none; }
       }
 
       .tn-auth-submit {
@@ -3051,7 +3444,7 @@ function ThemeStyles() {
    ============================================================ */
 function Header({
   view, setView, favoritesCount, historyCount,
-  user, onAvatarClick, profileOpen, onCloseProfile, onLogout,
+  user, onAvatarClick, profileOpen, onCloseProfile, onLogout, onLogoutAll,
   onSwitchToLogin, onSwitchToSignup, onEditProfile, onDeleteAccount,
 }) {
   const NAV_ITEMS = [
@@ -3119,6 +3512,7 @@ function Header({
                 favoritesCount={favoritesCount}
                 historyCount={historyCount}
                 onLogout={onLogout}
+                onLogoutAll={onLogoutAll}
                 onClose={onCloseProfile}
                 onGoArchive={() => { onCloseProfile(); setView('archive'); }}
                 onEdit={onEditProfile}
@@ -3138,7 +3532,7 @@ function Header({
 /* ============================================================
    PROFILE MENU — dropdown del avatar.
    ============================================================ */
-function ProfileMenu({ user, favoritesCount, historyCount, onLogout, onClose, onGoArchive, onEdit, onDelete }) {
+function ProfileMenu({ user, favoritesCount, historyCount, onLogout, onLogoutAll, onClose, onGoArchive, onEdit, onDelete }) {
   const ref = useRef(null);
   useEffect(() => {
     const onDocClick = (e) => {
@@ -3197,6 +3591,9 @@ function ProfileMenu({ user, favoritesCount, historyCount, onLogout, onClose, on
         <button className="tn-pm-btn ghost" onClick={onLogout}>
           Cerrar sesión
         </button>
+        <button className="tn-pm-btn ghost" onClick={onLogoutAll}>
+          Cerrar sesión en todos los dispositivos
+        </button>
         <div className="tn-pm-sep" />
         <button className="tn-pm-btn ghost danger" onClick={onDelete}>
           Eliminar cuenta
@@ -3207,7 +3604,7 @@ function ProfileMenu({ user, favoritesCount, historyCount, onLogout, onClose, on
 }
 
 /* ============================================================
-   AUTH MODAL — login / signup (mock, localStorage).
+   AUTH MODAL — login / signup contra el backend NestJS (/api/auth).
    ============================================================ */
 function AuthModal({ mode, setMode, onSuccess, onClose }) {
   const [name, setName] = useState('');
@@ -3218,7 +3615,10 @@ function AuthModal({ mode, setMode, onSuccess, onClose }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  const [sent, setSent] = useState(false);   // el correo de reseteo ya salió
+
   const isSignup = mode === 'signup';
+  const isForgot = mode === 'forgot';
 
   const submit = async (e) => {
     e.preventDefault();
@@ -3226,10 +3626,17 @@ function AuthModal({ mode, setMode, onSuccess, onClose }) {
     setError(null);
     setBusy(true);
     try {
-      const session = isSignup
-        ? await signupAccount({ name, email, password, gender })
-        : await loginAccount({ email, password });
-      onSuccess(session, isSignup ? 'signup' : 'login');
+      if (isForgot) {
+        await apiForgotPassword(email.trim().toLowerCase());
+        // Respuesta deliberadamente ciega: el servidor contesta lo mismo exista
+        // o no la cuenta, y aquí no lo delatamos tampoco.
+        setSent(true);
+      } else {
+        const session = isSignup
+          ? await signupAccount({ name, email, password, gender })
+          : await loginAccount({ email, password });
+        onSuccess(session, isSignup ? 'signup' : 'login');
+      }
     } catch (err) {
       setError(err.message || 'Algo ha ido mal.');
     } finally {
@@ -3265,29 +3672,48 @@ function AuthModal({ mode, setMode, onSuccess, onClose }) {
         <div className="tn-auth-head">
           <img src="assets/logo.png" alt="" aria-hidden="true" className="tn-auth-logo" />
           <h2 className="tn-auth-title">
-            {isSignup ? <>Crea tu <em>cuenta.</em></> : <>Bienvenido de <em>vuelta.</em></>}
+            {isForgot ? <>Recupera tu <em>acceso.</em></>
+              : isSignup ? <>Crea tu <em>cuenta.</em></>
+              : <>Bienvenido de <em>vuelta.</em></>}
           </h2>
           <p className="tn-auth-sub">
-            {isSignup
+            {isForgot
+              ? 'Te enviamos un enlace para elegir una contraseña nueva.'
+              : isSignup
               ? 'Guarda tus favoritos y tu historial olfativo.'
               : 'Accede a tu colección y búsquedas anteriores.'}
           </p>
         </div>
 
-        <div className="tn-auth-tabs">
-          <button
-            className={'tn-auth-tab' + (!isSignup ? ' on' : '')}
-            onClick={() => { setMode('login'); setError(null); }}
-            type="button"
-          >Iniciar sesión</button>
-          <button
-            className={'tn-auth-tab' + (isSignup ? ' on' : '')}
-            onClick={() => { setMode('signup'); setError(null); }}
-            type="button"
-          >Crear cuenta</button>
-          <span className={'tn-auth-tab-ind' + (isSignup ? ' right' : '')} />
-        </div>
+        {!isForgot && (
+          <div className="tn-auth-tabs">
+            <button
+              className={'tn-auth-tab' + (!isSignup ? ' on' : '')}
+              onClick={() => { setMode('login'); setError(null); }}
+              type="button"
+            >Iniciar sesión</button>
+            <button
+              className={'tn-auth-tab' + (isSignup ? ' on' : '')}
+              onClick={() => { setMode('signup'); setError(null); }}
+              type="button"
+            >Crear cuenta</button>
+            <span className={'tn-auth-tab-ind' + (isSignup ? ' right' : '')} />
+          </div>
+        )}
 
+        {isForgot && sent ? (
+          <div className="tn-auth-form">
+            <div className="tn-auth-ok">
+              Si <strong>{email.trim().toLowerCase()}</strong> tiene cuenta, le acaba de
+              llegar un enlace para poner una contraseña nueva. Caduca en 1 hora.
+            </div>
+            <p className="tn-auth-switch">
+              <button type="button" onClick={() => { setMode('login'); setSent(false); }}>
+                Volver a iniciar sesión
+              </button>
+            </p>
+          </div>
+        ) : (
         <form className="tn-auth-form" onSubmit={submit} noValidate>
           {isSignup && (
             <label className="tn-auth-field">
@@ -3313,7 +3739,7 @@ function AuthModal({ mode, setMode, onSuccess, onClose }) {
               autoFocus={!isSignup}
             />
           </label>
-          {isSignup && (
+          {isSignup && !isForgot && (
             <div className="tn-auth-field">
               <span className="tn-auth-label">
                 Tu fragancia · personaliza las recomendaciones
@@ -3335,6 +3761,7 @@ function AuthModal({ mode, setMode, onSuccess, onClose }) {
               </div>
             </div>
           )}
+          {!isForgot && (
           <label className="tn-auth-field">
             <span className="tn-auth-label">Contraseña</span>
             <div className="tn-auth-pass">
@@ -3356,26 +3783,42 @@ function AuthModal({ mode, setMode, onSuccess, onClose }) {
               </button>
             </div>
           </label>
+          )}
+
+          {!isSignup && !isForgot && (
+            <p className="tn-auth-forgot">
+              <button type="button" onClick={() => { setMode('forgot'); setError(null); }}>
+                ¿Has olvidado tu contraseña?
+              </button>
+            </p>
+          )}
 
           {error && (
             <div className="tn-auth-err">{error}</div>
           )}
 
           <button type="submit" className="tn-auth-submit" disabled={busy}>
-            {busy ? 'Procesando…' : (isSignup ? 'Crear cuenta' : 'Iniciar sesión')}
+            {busy ? 'Procesando…'
+              : isForgot ? 'Enviar enlace'
+              : isSignup ? 'Crear cuenta'
+              : 'Iniciar sesión'}
             {!busy && <SvgArrowRightThick size={14} />}
           </button>
 
           <p className="tn-auth-switch">
-            {isSignup
+            {isForgot
+              ? <>¿Te has acordado? <button type="button" onClick={() => { setMode('login'); setError(null); }}>Inicia sesión</button></>
+              : isSignup
               ? <>¿Ya tienes cuenta? <button type="button" onClick={() => { setMode('login'); setError(null); }}>Inicia sesión</button></>
               : <>¿Aún no tienes cuenta? <button type="button" onClick={() => { setMode('signup'); setError(null); }}>Crea una</button></>}
           </p>
 
           <p className="tn-auth-note">
-            Tus datos viajan cifrados a tu servidor de Top Note (NestJS + Supabase).
+            Tu sesión viaja en cookies httpOnly firmadas por tu servidor de Top Note
+            (NestJS + Supabase). La contraseña nunca se guarda en claro.
           </p>
         </form>
+        )}
       </PanelEl>
     </BgEl>
   );
