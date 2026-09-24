@@ -33,4 +33,12 @@ export class UsersService {
   save(user: User): Promise<User> {
     return this.repo.save(user);
   }
+
+  /**
+   * Sube la generacion de credenciales del usuario. Todo access token ya
+   * emitido lleva la generacion anterior en `tv` y deja de validar al instante.
+   */
+  async bumpTokenVersion(id: string): Promise<void> {
+    await this.repo.increment({ id }, 'tokenVersion', 1);
+  }
 }
